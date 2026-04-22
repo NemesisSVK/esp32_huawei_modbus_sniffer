@@ -1,0 +1,15 @@
+﻿# Mirror excludes (private GitHub copy)
+.pio/
+__pycache__/
+captures/
+_supporting-projects/
+
+# Sensitive runtime/local device config
+config.json
+data/config.json
+ota.json
+data/ota.json
+
+# Generated/local tooling outputs
+compile_commands.json
+src/BuildConfig.h

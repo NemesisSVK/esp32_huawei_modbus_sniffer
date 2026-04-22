@@ -1,0 +1,102 @@
+{
+  "_comment": "TEMPLATE — copy to config.json and fill in your secrets. config.json is gitignored.",
+
+  "wifi": {
+    "ssid":     "your_ssid",
+    "password": "your_wifi_password"
+  },
+
+  "mqtt": {
+    "server":     "192.168.1.100",
+    "port":       1883,
+    "user":       "",
+    "password":   "",
+    "client_id":  "huawei-sniffer",
+    "base_topic": "huawei_solar"
+  },
+
+  "device_info": {
+    "name":         "Huawei Solar Sniffer",
+    "manufacturer": "DIY",
+    "model":        "ESP32-S3 R16N8"
+  },
+
+  "network": {
+    "hostname":     "huawei-sniffer",
+    "mdns_enabled": true
+  },
+
+  "security": {
+    "auth_enabled":         false,
+    "username":             "admin",
+    "password":             "",
+    "ip_whitelist_enabled": false,
+    "ip_ranges":            []
+  },
+
+  "rs485": {
+    "baud_rate":        9600,
+    "meter_slave_addr": 1
+  },
+
+  "pins": {
+    "rs485_rx":    16,
+    "rs485_tx":    17,
+    "rs485_de_re": -1
+  },
+
+  "debug": {
+    "logging_enabled": true,
+    "sensor_refresh_metrics": false,
+    "raw_frame_dump": false,
+    "raw_capture_profile": "unknown_h41"
+  },
+
+  "raw_stream": {
+    "enabled": false,
+    "host": "192.168.1.50",
+    "port": 9900,
+    "queue_kb": 256,
+    "reconnect_ms": 1000,
+    "connect_timeout_ms": 1500,
+    "serial_mirror": false
+  },
+
+  "publish": {
+    "_comment": "Tier intervals (seconds). HIGH=meter, MEDIUM=inverter+battery, LOW=stats+info",
+    "tiers": {
+      "high":   { "interval_s": 10 },
+      "medium": { "interval_s": 30 },
+      "low":    { "interval_s": 60 }
+    },
+    "group_tiers": {
+      "meter":           "high",
+      "inverter_ac":     "medium",
+      "inverter_status": "low",
+      "inverter_energy": "low",
+      "inverter_info":   "low",
+      "pv_strings":      "low",
+      "battery":         "medium",
+      "battery_u1":      "medium",
+      "battery_u2":      "medium",
+      "battery_packs":   "low",
+      "battery_cfg":     "low",
+      "sdongle":         "medium"
+    },
+    "group_enabled": {
+      "_comment": "Set false to silence a group completely (no data, no availability topic)",
+      "meter":           true,
+      "inverter_ac":     true,
+      "inverter_status": true,
+      "inverter_energy": true,
+      "inverter_info":   true,
+      "pv_strings":      true,
+      "battery":         true,
+      "battery_u1":      true,
+      "battery_u2":      true,
+      "battery_packs":   true,
+      "battery_cfg":     true,
+      "sdongle":         true
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "_comment": "TEMPLATE — copy to ota.json and change the password. ota.json is gitignored.",
+  "ota": {
+    "password":       "changeme",
+    "window_seconds": 600,
+    "port":           3232
+  }
+}
