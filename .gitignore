@@ -17,3 +17,17 @@ src/BuildConfig.h
 # Mirror-local workflow helpers (keep local, do not push)
 sync_from_local.ps1
 MIRROR_SYNC_INSTRUCTIONS.md
+
+# Omit AI/process memory and local editor noise from GitHub mirror
+AGENTS.md
+AI_CONTEXT.md
+TASKS.md
+DECISIONS.md
+HISTORY.md
+SESSION_LOG.md
+MCP_MEMORY_SYNC.json
+scripts/validate_ai_memory.ps1
+scripts/update_mcp_sync_state.ps1
+.clangd
+.vscode/c_cpp_properties.json
+.vscode/launch.json
