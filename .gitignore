@@ -13,3 +13,7 @@ data/ota.json
 # Generated/local tooling outputs
 compile_commands.json
 src/BuildConfig.h
+
+# Mirror-local workflow helpers (keep local, do not push)
+sync_from_local.ps1
+MIRROR_SYNC_INSTRUCTIONS.md
