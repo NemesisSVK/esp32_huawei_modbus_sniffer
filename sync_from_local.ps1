@@ -11,7 +11,15 @@ if (-not (Test-Path -LiteralPath $Source)) {
 }
 
 $excludeDirs = @('.git', '.pio', '__pycache__', 'captures', '_supporting-projects')
-$excludeFiles = @('config.json', 'data\\config.json', 'ota.json', 'data\\ota.json', 'compile_commands.json', 'src\\BuildConfig.h')
+$excludeFiles = @(
+    'config.json',
+    'ota.json',
+    'compile_commands.json',
+    'BuildConfig.h',
+    '.gitignore',
+    'sync_from_local.ps1',
+    'MIRROR_SYNC_INSTRUCTIONS.md'
+)
 
 $robocopyArgs = @($Source, $Mirror, '/MIR', '/R:2', '/W:1')
 $robocopyArgs += ($excludeDirs | ForEach-Object { @('/XD', $_) })
@@ -24,7 +32,16 @@ if ($rc -ge 8) {
 }
 
 # Explicit safety cleanup for path-specific exclusions
-foreach ($rel in $excludeFiles) {
+$cleanupFiles = @(
+    'config.json',
+    'data\config.json',
+    'ota.json',
+    'data\ota.json',
+    'compile_commands.json',
+    'src\BuildConfig.h'
+)
+
+foreach ($rel in $cleanupFiles) {
     $p = Join-Path $Mirror $rel
     if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force

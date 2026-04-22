@@ -1,4 +1,4 @@
-﻿# Mirror excludes (private GitHub copy)
+# Mirror excludes (private GitHub copy)
 .pio/
 __pycache__/
 captures/
