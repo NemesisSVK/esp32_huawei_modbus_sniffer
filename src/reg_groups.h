@@ -72,6 +72,11 @@ typedef enum : uint8_t {
     // → sensor.py: not directly, but SDongle exposes totals
     GRP_SDONGLE,            // regs 37498–37516: total PV, load, grid, battery power
 
+    // ---- Manual priority publish bucket ----
+    // No KNOWN_REGS entries map here directly; selected register names
+    // are routed at publish-time from their natural group.
+    GRP_PRIORITY_MANUAL,
+
     // ---- Sentinel — must be last ----
     GRP_COUNT
 } RegGroup;
@@ -123,4 +128,7 @@ static const RegGroupInfo GROUP_INFO[GRP_COUNT] = {
     { GRP_SDONGLE,          "sdongle",         "SDongle Aggregates",
       "Total PV input power, load power, grid power, battery power across all inverters",
       "sdongle",  TIER_MEDIUM },
+    { GRP_PRIORITY_MANUAL,  "priority_manual", "Manual Priority Group",
+      "User-selected registers from any source/group, published under dedicated topic",
+      "priority", TIER_HIGH },
 };

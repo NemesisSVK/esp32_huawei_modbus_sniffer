@@ -246,9 +246,9 @@ def validate_config(project_dir):
         rcp = debug["raw_capture_profile"]
         if not isinstance(rcp, str):
             raise Exception("debug.raw_capture_profile must be a string")
-        if rcp not in ("unknown_h41", "compare_power", "research_inverter_phase", "all_frames"):
+        if rcp not in ("unknown_h41", "all_frames"):
             raise Exception(
-                f"debug.raw_capture_profile must be one of ['unknown_h41','compare_power','research_inverter_phase','all_frames'], got: {rcp!r}"
+                f"debug.raw_capture_profile must be one of ['unknown_h41','all_frames'], got: {rcp!r}"
             )
 
     # ---- raw_stream (optional section) ----
@@ -280,6 +280,43 @@ def validate_config(project_dir):
     if raw_stream.get("enabled", False):
         if not raw_stream.get("host"):
             raise Exception("raw_stream.host is required when raw_stream.enabled is true")
+
+    # ---- publish (optional section) ----
+    publish = config.get("publish", {})
+    if publish and not isinstance(publish, dict):
+        raise Exception("publish must be an object")
+    tiers = publish.get("tiers", {})
+    if tiers and not isinstance(tiers, dict):
+        raise Exception("publish.tiers must be an object")
+    for tk in ("high", "medium", "low"):
+        tnode = tiers.get(tk, {})
+        if tnode and not isinstance(tnode, dict):
+            raise Exception(f"publish.tiers.{tk} must be an object")
+        if "interval_s" in tnode:
+            iv = tnode["interval_s"]
+            if not isinstance(iv, int) or iv < 0:
+                raise Exception(f"publish.tiers.{tk}.interval_s must be a non-negative integer, got: {iv!r}")
+
+    mg = publish.get("manual_group", {})
+    if mg and not isinstance(mg, dict):
+        raise Exception("publish.manual_group must be an object")
+    if "enabled" in mg and not isinstance(mg["enabled"], bool):
+        raise Exception("publish.manual_group.enabled must be a boolean")
+    if "tier" in mg:
+        tier = mg["tier"]
+        if not isinstance(tier, str) or tier not in ("high", "medium", "low"):
+            raise Exception(f"publish.manual_group.tier must be one of high|medium|low, got: {tier!r}")
+    if "registers" in mg:
+        regs = mg["registers"]
+        if not isinstance(regs, list):
+            raise Exception("publish.manual_group.registers must be an array")
+        if len(regs) > 64:
+            raise Exception(f"publish.manual_group.registers max length is 64, got: {len(regs)}")
+        for i, r in enumerate(regs):
+            if not isinstance(r, str):
+                raise Exception(f"publish.manual_group.registers[{i}] must be a string")
+            if not r.strip():
+                raise Exception(f"publish.manual_group.registers[{i}] must not be empty")
 
     # Validate CODE_DATE discipline and Change log formatting
     validate_code_date(project_dir)

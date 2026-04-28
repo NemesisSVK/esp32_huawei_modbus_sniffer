@@ -1,9 +1,152 @@
 #include "ConfigManager.h"
+#include "huawei_decoder.h"
 #include "UnifiedLogger.h"
 #include "PsramJsonAllocator.h"
 #include <Arduino.h>
 
 #define CONFIG_PATH "/config.json"
+
+static String normalize_manual_selector_source(String src) {
+    src.trim();
+    src.toLowerCase();
+    src.replace("-", "_");
+    if (src == "fc03" || src == "fc04" || src == "h41_33" || src == "h41_x")
+        return src;
+    return "";
+}
+
+static void normalize_raw_capture_profile(String& profile) {
+    if (profile == "unknown_h41" || profile == "all_frames") return;
+    profile = "unknown_h41";
+}
+
+static bool normalize_manual_group_selector(const String& input,
+                                            String* out_selector,
+                                            String* out_register,
+                                            String* out_error) {
+    String s = input;
+    s.trim();
+    if (s.length() == 0) {
+        if (out_error) *out_error = "Manual group selector cannot be empty";
+        return false;
+    }
+
+    String reg_name = s;
+    const int sep = s.indexOf(':');
+    if (sep >= 0) {
+        if (sep == 0) {
+            if (out_error) *out_error = "Manual group source selector is missing source token before ':'";
+            return false;
+        }
+        String src = s.substring(0, sep);
+        reg_name = s.substring(sep + 1);
+        reg_name.trim();
+        if (reg_name.length() == 0) {
+            if (out_error) *out_error = "Manual group source selector is missing register name after ':'";
+            return false;
+        }
+        String norm_src = normalize_manual_selector_source(src);
+        if (norm_src.length() == 0) {
+            if (out_error) *out_error = "Unknown manual-group source token (expected fc03|fc04|h41_33|h41_x)";
+            return false;
+        }
+        s = norm_src + ":" + reg_name;
+    }
+
+    if (!huawei_decoder_is_known_register_name(reg_name.c_str())) {
+        if (out_error) *out_error = String("Unknown register in manual group: '") + reg_name + "'";
+        return false;
+    }
+
+    if (out_selector) *out_selector = s;
+    if (out_register) *out_register = reg_name;
+    return true;
+}
+
+static bool validate_runtime_settings(const Settings& st, String* out_error) {
+    auto fail = [&](const String& msg) -> bool {
+        if (out_error) *out_error = msg;
+        return false;
+    };
+
+    if (st.mqtt.port < 1 || st.mqtt.port > 65535)
+        return fail("mqtt.port must be 1-65535");
+
+    if (st.rs485.baud_rate <= 0)
+        return fail("rs485.baud_rate must be a positive integer");
+    if (st.rs485.meter_slave_addr < 1 || st.rs485.meter_slave_addr > 247)
+        return fail("rs485.meter_slave_addr must be 1-247");
+
+    if (st.pins.rs485_rx < 0)
+        return fail("pins.rs485_rx must be a non-negative GPIO number");
+    if (st.pins.rs485_tx < 0)
+        return fail("pins.rs485_tx must be a non-negative GPIO number");
+    if (st.pins.rs485_de_re < -1)
+        return fail("pins.rs485_de_re must be -1 (auto-control) or a non-negative GPIO number");
+
+    if (st.security.auth_enabled) {
+        String user = st.security.username;
+        user.trim();
+        if (user.length() == 0)
+            return fail("security.username is required when auth_enabled is true");
+        if (st.security.password.length() == 0)
+            return fail("security.password is required when auth_enabled is true");
+    }
+
+    if (st.security.ip_ranges.size() > 50)
+        return fail("security.ip_ranges cannot exceed 50 entries");
+    for (size_t i = 0; i < st.security.ip_ranges.size(); i++) {
+        String range = st.security.ip_ranges[i];
+        range.trim();
+        if (range.length() == 0)
+            return fail(String("security.ip_ranges[") + i + "] must not be empty");
+        if (!IPWhitelistManager::isValidIPRange(range))
+            return fail(String("security.ip_ranges[") + i + "] is not a valid IP or range");
+    }
+
+    if (st.debug.raw_capture_profile != "unknown_h41" &&
+        st.debug.raw_capture_profile != "all_frames")
+        return fail("debug.raw_capture_profile must be unknown_h41 or all_frames");
+
+    if (st.raw_stream.port < 1 || st.raw_stream.port > 65535)
+        return fail("raw_stream.port must be 1-65535");
+    if (st.raw_stream.queue_kb < 32 || st.raw_stream.queue_kb > 2048)
+        return fail("raw_stream.queue_kb must be 32-2048");
+    if (st.raw_stream.reconnect_ms < 100 || st.raw_stream.reconnect_ms > 60000)
+        return fail("raw_stream.reconnect_ms must be 100-60000");
+    if (st.raw_stream.connect_timeout_ms < 100 || st.raw_stream.connect_timeout_ms > 30000)
+        return fail("raw_stream.connect_timeout_ms must be 100-30000");
+    if (st.raw_stream.enabled) {
+        String host = st.raw_stream.host;
+        host.trim();
+        if (host.length() == 0)
+            return fail("raw_stream.host is required when raw_stream.enabled is true");
+    }
+
+    for (int t = 0; t < TIER_COUNT; t++) {
+        if (st.publish.tier_interval_s[t] < 0)
+            return fail("publish.tiers.*.interval_s must be a non-negative integer");
+    }
+    for (int g = 0; g < GRP_COUNT; g++) {
+        if (st.publish.group_tier[g] >= TIER_COUNT)
+            return fail("publish.group_tiers contains an invalid tier value");
+    }
+
+    if (st.publish.manual_group.tier >= TIER_COUNT)
+        return fail("publish.manual_group.tier must be high|medium|low");
+    if (st.publish.manual_group.registers.size() > 64)
+        return fail("publish.manual_group.registers supports max 64 entries");
+    for (size_t i = 0; i < st.publish.manual_group.registers.size(); i++) {
+        String selector, reg_name, err;
+        if (!normalize_manual_group_selector(st.publish.manual_group.registers[i], &selector, &reg_name, &err)) {
+            if (err.length() == 0)
+                err = "Invalid manual-group selector";
+            return fail(err);
+        }
+    }
+
+    return true;
+}
 
 ConfigManager::ConfigManager() {
     setDefaults();
@@ -53,6 +196,9 @@ void ConfigManager::setDefaults() {
         settings.publish.group_tier[g]    = (uint8_t)GROUP_INFO[g].default_tier;
         settings.publish.group_enabled[g] = true;
     }
+    settings.publish.manual_group.enabled = false;
+    settings.publish.manual_group.tier = TIER_HIGH;
+    settings.publish.manual_group.registers.clear();
 }
 
 bool ConfigManager::loadConfiguration() {
@@ -147,6 +293,7 @@ bool ConfigManager::parseJson(const JsonDocument& doc) {
         settings.debug.raw_frame_dump = doc["debug"]["raw_frame_dump"].as<bool>();
     if (doc["debug"]["raw_capture_profile"].is<const char*>())
         settings.debug.raw_capture_profile = doc["debug"]["raw_capture_profile"].as<String>();
+    normalize_raw_capture_profile(settings.debug.raw_capture_profile);
 
     // raw stream
     if (!doc["raw_stream"]["enabled"].isNull())
@@ -186,6 +333,7 @@ bool ConfigManager::parseJson(const JsonDocument& doc) {
         { "battery_packs",   GRP_BATTERY_PACKS   },
         { "battery_cfg",     GRP_BATTERY_SETTINGS},
         { "sdongle",         GRP_SDONGLE         },
+        { "priority_manual", GRP_PRIORITY_MANUAL },
     };
     for (const auto& gk : GRP_KEY_MAP) {
         if (doc["publish"]["group_tiers"][gk.key].is<const char*>()) {
@@ -201,6 +349,32 @@ bool ConfigManager::parseJson(const JsonDocument& doc) {
         if (!doc["publish"]["group_enabled"][gk.key].isNull())
             settings.publish.group_enabled[gk.grp] = doc["publish"]["group_enabled"][gk.key].as<bool>();
     }
+
+    // manual priority group
+    if (!doc["publish"]["manual_group"]["enabled"].isNull())
+        settings.publish.manual_group.enabled = doc["publish"]["manual_group"]["enabled"].as<bool>();
+    if (doc["publish"]["manual_group"]["tier"].is<const char*>()) {
+        String t = doc["publish"]["manual_group"]["tier"].as<String>();
+        if      (t == "high")   settings.publish.manual_group.tier = TIER_HIGH;
+        else if (t == "medium") settings.publish.manual_group.tier = TIER_MEDIUM;
+        else if (t == "low")    settings.publish.manual_group.tier = TIER_LOW;
+    }
+    settings.publish.manual_group.registers.clear();
+    if (doc["publish"]["manual_group"]["registers"].is<JsonArrayConst>()) {
+        for (JsonVariantConst v : doc["publish"]["manual_group"]["registers"].as<JsonArrayConst>()) {
+            if (!v.is<const char*>()) continue;
+            String selector, reg_name;
+            if (!normalize_manual_group_selector(v.as<String>(), &selector, &reg_name, nullptr)) continue;
+            bool exists = false;
+            for (const String& cur : settings.publish.manual_group.registers) {
+                if (cur == selector) { exists = true; break; }
+            }
+            if (!exists) settings.publish.manual_group.registers.push_back(selector);
+            if (settings.publish.manual_group.registers.size() >= 64) break;
+        }
+    }
+    settings.publish.group_tier[GRP_PRIORITY_MANUAL] = settings.publish.manual_group.tier;
+    settings.publish.group_enabled[GRP_PRIORITY_MANUAL] = settings.publish.manual_group.enabled;
 
     return true;
 }
@@ -262,6 +436,13 @@ void ConfigManager::buildJson(JsonDocument& doc) const {
     }
     for (int g = 0; g < GRP_COUNT; g++)
         doc["publish"]["group_enabled"][GROUP_INFO[g].key] = settings.publish.group_enabled[g];
+    doc["publish"]["manual_group"]["enabled"] = settings.publish.manual_group.enabled;
+    doc["publish"]["manual_group"]["tier"] =
+        TIER_NAMES[(settings.publish.manual_group.tier < TIER_COUNT)
+            ? settings.publish.manual_group.tier : TIER_HIGH];
+    JsonArray mgRegs = doc["publish"]["manual_group"]["registers"].to<JsonArray>();
+    for (const String& reg : settings.publish.manual_group.registers)
+        mgRegs.add(reg);
 }
 
 bool ConfigManager::saveConfiguration() {
@@ -323,91 +504,168 @@ String ConfigManager::getSettingsJson() const {
     return out;
 }
 
+String ConfigManager::getSettingsJsonPretty(bool redactPasswords) const {
+    JsonDocument doc;
+    buildJson(doc);
+    if (redactPasswords) {
+        doc["wifi"]["password"]     = "";
+        doc["mqtt"]["password"]     = "";
+        doc["security"]["password"] = "";
+    }
+    String out;
+    serializeJsonPretty(doc, out);
+    // Match project file style more closely on Windows.
+    out.replace("\n", "\r\n");
+    if (!out.endsWith("\r\n")) out += "\r\n";
+    return out;
+}
+
 bool ConfigManager::updateSettingsFromJson(const String& jsonBody) {
+    lastError = "";
     PsramJsonAllocator alloc;
     JsonDocument doc(&alloc);
     DeserializationError derr = deserializeJson(doc, jsonBody);
     if (derr != DeserializationError::Ok) {
         UnifiedLogger::error("[CFG] updateSettingsFromJson: parse error: %s (body len=%u)\n",
                              derr.c_str(), (unsigned)jsonBody.length());
+        lastError = String("JSON parse error: ") + derr.c_str();
         return false;
     }
 
-    // Helper: only update if key present AND non-empty (passwords: never overwrite with empty)
-    auto ss = [&](const char* k1, const char* k2, String& target) {
-        if (doc[k1][k2].is<const char*>()) target = doc[k1][k2].as<String>();
-    };
-    auto sp = [&](const char* k1, const char* k2, String& target) {
-        // Password variant: only update when non-empty (empty = "keep current")
-        if (doc[k1][k2].is<const char*>()) {
-            String v = doc[k1][k2].as<String>();
-            if (v.length() > 0) target = v;
+    Settings candidate = settings;
+    Settings previous = settings;
+
+    // Helpers with strict type checks.
+    auto setString = [&](const char* k1, const char* k2, String& target, const char* fqKey) -> bool {
+        JsonVariantConst v = doc[k1][k2];
+        if (v.isNull()) return true;
+        if (!v.is<const char*>()) {
+            lastError = String(fqKey) + " must be a string";
+            return false;
         }
+        target = v.as<String>();
+        return true;
     };
-    auto si = [&](const char* k1, const char* k2, int& target) {
-        if (!doc[k1][k2].isNull()) target = doc[k1][k2].as<int>();
+    auto setPassword = [&](const char* k1, const char* k2, String& target, const char* fqKey) -> bool {
+        JsonVariantConst v = doc[k1][k2];
+        if (v.isNull()) return true;
+        if (!v.is<const char*>()) {
+            lastError = String(fqKey) + " must be a string";
+            return false;
+        }
+        String s = v.as<String>();
+        if (s.length() > 0) target = s; // empty means keep current
+        return true;
     };
-    auto sb = [&](const char* k1, const char* k2, bool& target) {
-        if (!doc[k1][k2].isNull()) target = doc[k1][k2].as<bool>();
+    auto setInt = [&](const char* k1, const char* k2, int& target, const char* fqKey) -> bool {
+        JsonVariantConst v = doc[k1][k2];
+        if (v.isNull()) return true;
+        if (!(v.is<int>() || v.is<long>())) {
+            lastError = String(fqKey) + " must be an integer";
+            return false;
+        }
+        target = v.as<int>();
+        return true;
+    };
+    auto setBool = [&](const char* k1, const char* k2, bool& target, const char* fqKey) -> bool {
+        JsonVariantConst v = doc[k1][k2];
+        if (v.isNull()) return true;
+        if (!v.is<bool>()) {
+            lastError = String(fqKey) + " must be a boolean";
+            return false;
+        }
+        target = v.as<bool>();
+        return true;
     };
 
-    ss("wifi","ssid",     settings.wifi.ssid);
-    sp("wifi","password", settings.wifi.password);  // sp: empty = keep current
+    if (!setString("wifi","ssid", candidate.wifi.ssid, "wifi.ssid")) return false;
+    if (!setPassword("wifi","password", candidate.wifi.password, "wifi.password")) return false;
 
-    ss("mqtt","server",    settings.mqtt.server);
-    si("mqtt","port",      settings.mqtt.port);
-    ss("mqtt","user",      settings.mqtt.user);
-    sp("mqtt","password",  settings.mqtt.password);  // sp: empty = keep current
-    ss("mqtt","client_id", settings.mqtt.client_id);
-    ss("mqtt","base_topic",settings.mqtt.base_topic);
+    if (!setString("mqtt","server", candidate.mqtt.server, "mqtt.server")) return false;
+    if (!setInt("mqtt","port", candidate.mqtt.port, "mqtt.port")) return false;
+    if (!setString("mqtt","user", candidate.mqtt.user, "mqtt.user")) return false;
+    if (!setPassword("mqtt","password", candidate.mqtt.password, "mqtt.password")) return false;
+    if (!setString("mqtt","client_id", candidate.mqtt.client_id, "mqtt.client_id")) return false;
+    if (!setString("mqtt","base_topic", candidate.mqtt.base_topic, "mqtt.base_topic")) return false;
 
-    ss("device_info","name",         settings.device_info.name);
-    ss("device_info","manufacturer", settings.device_info.manufacturer);
-    ss("device_info","model",        settings.device_info.model);
+    if (!setString("device_info","name", candidate.device_info.name, "device_info.name")) return false;
+    if (!setString("device_info","manufacturer", candidate.device_info.manufacturer, "device_info.manufacturer")) return false;
+    if (!setString("device_info","model", candidate.device_info.model, "device_info.model")) return false;
 
-    ss("network","hostname", settings.network.hostname);
-    sb("network","mdns_enabled", settings.network.mdns_enabled);
+    if (!setString("network","hostname", candidate.network.hostname, "network.hostname")) return false;
+    if (!setBool("network","mdns_enabled", candidate.network.mdns_enabled, "network.mdns_enabled")) return false;
 
-    sb("security","auth_enabled",         settings.security.auth_enabled);
-    ss("security","username",             settings.security.username);
-    sp("security","password",             settings.security.password);  // sp: empty = keep current
-    sb("security","ip_whitelist_enabled", settings.security.ip_whitelist_enabled);
+    if (!setBool("security","auth_enabled", candidate.security.auth_enabled, "security.auth_enabled")) return false;
+    if (!setString("security","username", candidate.security.username, "security.username")) return false;
+    if (!setPassword("security","password", candidate.security.password, "security.password")) return false;
+    if (!setBool("security","ip_whitelist_enabled", candidate.security.ip_whitelist_enabled, "security.ip_whitelist_enabled")) return false;
     if (!doc["security"]["ip_ranges"].isNull()) {
-        settings.security.ip_ranges.clear();
-        for (JsonVariant v : doc["security"]["ip_ranges"].as<JsonArray>())
-            settings.security.ip_ranges.push_back(v.as<String>());
+        JsonVariantConst ipRanges = doc["security"]["ip_ranges"];
+        if (!ipRanges.is<JsonArrayConst>()) {
+            lastError = "security.ip_ranges must be an array";
+            return false;
+        }
+        candidate.security.ip_ranges.clear();
+        size_t idxRange = 0;
+        for (JsonVariantConst v : ipRanges.as<JsonArrayConst>()) {
+            if (!v.is<const char*>()) {
+                lastError = String("security.ip_ranges[") + idxRange + "] must be a string";
+                return false;
+            }
+            String range = v.as<String>();
+            range.trim();
+            candidate.security.ip_ranges.push_back(range);
+            idxRange++;
+        }
     }
 
-    si("rs485","baud_rate",        settings.rs485.baud_rate);
-    si("rs485","meter_slave_addr", settings.rs485.meter_slave_addr);
+    if (!setInt("rs485","baud_rate", candidate.rs485.baud_rate, "rs485.baud_rate")) return false;
+    if (!setInt("rs485","meter_slave_addr", candidate.rs485.meter_slave_addr, "rs485.meter_slave_addr")) return false;
 
-    si("pins","rs485_rx",    settings.pins.rs485_rx);
-    si("pins","rs485_tx",    settings.pins.rs485_tx);
-    si("pins","rs485_de_re", settings.pins.rs485_de_re);
+    if (!setInt("pins","rs485_rx", candidate.pins.rs485_rx, "pins.rs485_rx")) return false;
+    if (!setInt("pins","rs485_tx", candidate.pins.rs485_tx, "pins.rs485_tx")) return false;
+    if (!setInt("pins","rs485_de_re", candidate.pins.rs485_de_re, "pins.rs485_de_re")) return false;
 
-    sb("debug","logging_enabled",        settings.debug.logging_enabled);
-    sb("debug","sensor_refresh_metrics", settings.debug.sensor_refresh_metrics);
-    sb("debug","raw_frame_dump",         settings.debug.raw_frame_dump);
-    ss("debug","raw_capture_profile",    settings.debug.raw_capture_profile);
-    sb("raw_stream","enabled",            settings.raw_stream.enabled);
-    ss("raw_stream","host",               settings.raw_stream.host);
-    si("raw_stream","port",               settings.raw_stream.port);
-    si("raw_stream","queue_kb",           settings.raw_stream.queue_kb);
-    si("raw_stream","reconnect_ms",       settings.raw_stream.reconnect_ms);
-    si("raw_stream","connect_timeout_ms", settings.raw_stream.connect_timeout_ms);
-    sb("raw_stream","serial_mirror",      settings.raw_stream.serial_mirror);
-    // Apply logging toggle immediately — no reboot required
-    UnifiedLogger::setEnabled(settings.debug.logging_enabled);
+    if (!setBool("debug","logging_enabled", candidate.debug.logging_enabled, "debug.logging_enabled")) return false;
+    if (!setBool("debug","sensor_refresh_metrics", candidate.debug.sensor_refresh_metrics, "debug.sensor_refresh_metrics")) return false;
+    if (!setBool("debug","raw_frame_dump", candidate.debug.raw_frame_dump, "debug.raw_frame_dump")) return false;
+    if (!setString("debug","raw_capture_profile", candidate.debug.raw_capture_profile, "debug.raw_capture_profile")) return false;
+    normalize_raw_capture_profile(candidate.debug.raw_capture_profile);
 
-    // publish tiers (live update — takes effect on next mqtt_tick)
-    if (!doc["publish"]["tiers"]["high"]["interval_s"].isNull())
-        settings.publish.tier_interval_s[TIER_HIGH]   = doc["publish"]["tiers"]["high"]["interval_s"].as<int>();
-    if (!doc["publish"]["tiers"]["medium"]["interval_s"].isNull())
-        settings.publish.tier_interval_s[TIER_MEDIUM] = doc["publish"]["tiers"]["medium"]["interval_s"].as<int>();
-    if (!doc["publish"]["tiers"]["low"]["interval_s"].isNull())
-        settings.publish.tier_interval_s[TIER_LOW]    = doc["publish"]["tiers"]["low"]["interval_s"].as<int>();
+    if (!setBool("raw_stream","enabled", candidate.raw_stream.enabled, "raw_stream.enabled")) return false;
+    if (!setString("raw_stream","host", candidate.raw_stream.host, "raw_stream.host")) return false;
+    if (!setInt("raw_stream","port", candidate.raw_stream.port, "raw_stream.port")) return false;
+    if (!setInt("raw_stream","queue_kb", candidate.raw_stream.queue_kb, "raw_stream.queue_kb")) return false;
+    if (!setInt("raw_stream","reconnect_ms", candidate.raw_stream.reconnect_ms, "raw_stream.reconnect_ms")) return false;
+    if (!setInt("raw_stream","connect_timeout_ms", candidate.raw_stream.connect_timeout_ms, "raw_stream.connect_timeout_ms")) return false;
+    if (!setBool("raw_stream","serial_mirror", candidate.raw_stream.serial_mirror, "raw_stream.serial_mirror")) return false;
 
-    // group tier assignments
+    // publish tiers (live update; takes effect on next mqtt_tick)
+    if (!doc["publish"]["tiers"]["high"]["interval_s"].isNull()) {
+        JsonVariantConst v = doc["publish"]["tiers"]["high"]["interval_s"];
+        if (!(v.is<int>() || v.is<long>())) {
+            lastError = "publish.tiers.high.interval_s must be an integer";
+            return false;
+        }
+        candidate.publish.tier_interval_s[TIER_HIGH] = v.as<int>();
+    }
+    if (!doc["publish"]["tiers"]["medium"]["interval_s"].isNull()) {
+        JsonVariantConst v = doc["publish"]["tiers"]["medium"]["interval_s"];
+        if (!(v.is<int>() || v.is<long>())) {
+            lastError = "publish.tiers.medium.interval_s must be an integer";
+            return false;
+        }
+        candidate.publish.tier_interval_s[TIER_MEDIUM] = v.as<int>();
+    }
+    if (!doc["publish"]["tiers"]["low"]["interval_s"].isNull()) {
+        JsonVariantConst v = doc["publish"]["tiers"]["low"]["interval_s"];
+        if (!(v.is<int>() || v.is<long>())) {
+            lastError = "publish.tiers.low.interval_s must be an integer";
+            return false;
+        }
+        candidate.publish.tier_interval_s[TIER_LOW] = v.as<int>();
+    }
+
     static const struct { const char* key; RegGroup grp; } GRP_KEY_MAP[] = {
         { "meter",           GRP_METER           },
         { "inverter_ac",     GRP_INVERTER_AC     },
@@ -421,23 +679,124 @@ bool ConfigManager::updateSettingsFromJson(const String& jsonBody) {
         { "battery_packs",   GRP_BATTERY_PACKS   },
         { "battery_cfg",     GRP_BATTERY_SETTINGS},
         { "sdongle",         GRP_SDONGLE         },
+        { "priority_manual", GRP_PRIORITY_MANUAL },
     };
+
     if (!doc["publish"]["group_tiers"].isNull()) {
+        if (!doc["publish"]["group_tiers"].is<JsonObjectConst>()) {
+            lastError = "publish.group_tiers must be an object";
+            return false;
+        }
         for (const auto& gk : GRP_KEY_MAP) {
             if (doc["publish"]["group_tiers"][gk.key].is<const char*>()) {
                 String t = doc["publish"]["group_tiers"][gk.key].as<String>();
-                if      (t == "high")   settings.publish.group_tier[gk.grp] = TIER_HIGH;
-                else if (t == "medium") settings.publish.group_tier[gk.grp] = TIER_MEDIUM;
-                else if (t == "low")    settings.publish.group_tier[gk.grp] = TIER_LOW;
+                if      (t == "high")   candidate.publish.group_tier[gk.grp] = TIER_HIGH;
+                else if (t == "medium") candidate.publish.group_tier[gk.grp] = TIER_MEDIUM;
+                else if (t == "low")    candidate.publish.group_tier[gk.grp] = TIER_LOW;
+                else {
+                    lastError = String("publish.group_tiers.") + gk.key + " must be high|medium|low";
+                    return false;
+                }
+            } else if (!doc["publish"]["group_tiers"][gk.key].isNull()) {
+                lastError = String("publish.group_tiers.") + gk.key + " must be a string";
+                return false;
             }
         }
     }
+
     if (!doc["publish"]["group_enabled"].isNull()) {
+        if (!doc["publish"]["group_enabled"].is<JsonObjectConst>()) {
+            lastError = "publish.group_enabled must be an object";
+            return false;
+        }
         for (const auto& gk : GRP_KEY_MAP) {
-            if (!doc["publish"]["group_enabled"][gk.key].isNull())
-                settings.publish.group_enabled[gk.grp] = doc["publish"]["group_enabled"][gk.key].as<bool>();
+            JsonVariantConst v = doc["publish"]["group_enabled"][gk.key];
+            if (!v.isNull()) {
+                if (!v.is<bool>()) {
+                    lastError = String("publish.group_enabled.") + gk.key + " must be a boolean";
+                    return false;
+                }
+                candidate.publish.group_enabled[gk.grp] = v.as<bool>();
+            }
         }
     }
 
-    return saveConfiguration();
+    if (!doc["publish"]["manual_group"].isNull()) {
+        JsonVariantConst mg = doc["publish"]["manual_group"];
+        if (!mg.is<JsonObjectConst>()) {
+            lastError = "publish.manual_group must be an object";
+            return false;
+        }
+
+        if (!mg["enabled"].isNull()) {
+            if (!mg["enabled"].is<bool>()) {
+                lastError = "publish.manual_group.enabled must be a boolean";
+                return false;
+            }
+            candidate.publish.manual_group.enabled = mg["enabled"].as<bool>();
+        }
+
+        if (mg["tier"].is<const char*>()) {
+            String t = mg["tier"].as<String>();
+            if      (t == "high")   candidate.publish.manual_group.tier = TIER_HIGH;
+            else if (t == "medium") candidate.publish.manual_group.tier = TIER_MEDIUM;
+            else if (t == "low")    candidate.publish.manual_group.tier = TIER_LOW;
+            else {
+                lastError = String("publish.manual_group.tier must be high|medium|low (got '") + t + "')";
+                return false;
+            }
+        } else if (!mg["tier"].isNull()) {
+            lastError = "publish.manual_group.tier must be a string";
+            return false;
+        }
+
+        if (!mg["registers"].isNull()) {
+            if (!mg["registers"].is<JsonArrayConst>()) {
+                lastError = "publish.manual_group.registers must be an array of selectors (register or source:register)";
+                return false;
+            }
+            std::vector<String> regs;
+            for (JsonVariantConst v : mg["registers"].as<JsonArrayConst>()) {
+                if (!v.is<const char*>()) {
+                    lastError = "publish.manual_group.registers entries must be strings";
+                    return false;
+                }
+                String selector, reg_name, sel_err;
+                if (!normalize_manual_group_selector(v.as<String>(), &selector, &reg_name, &sel_err)) {
+                    if (sel_err.length() == 0)
+                        sel_err = "Invalid manual-group selector";
+                    lastError = sel_err;
+                    return false;
+                }
+                bool exists = false;
+                for (const String& cur : regs) {
+                    if (cur == selector) { exists = true; break; }
+                }
+                if (!exists) regs.push_back(selector);
+                if (regs.size() > 64) {
+                    lastError = "publish.manual_group.registers supports max 64 entries";
+                    return false;
+                }
+            }
+            candidate.publish.manual_group.registers = regs;
+        }
+    }
+
+    candidate.publish.group_tier[GRP_PRIORITY_MANUAL] = candidate.publish.manual_group.tier;
+    candidate.publish.group_enabled[GRP_PRIORITY_MANUAL] = candidate.publish.manual_group.enabled;
+
+    if (!validate_runtime_settings(candidate, &lastError))
+        return false;
+
+    settings = candidate;
+    UnifiedLogger::setEnabled(settings.debug.logging_enabled);
+
+    if (!saveConfiguration()) {
+        settings = previous; // rollback in-memory state if persistence fails
+        UnifiedLogger::setEnabled(settings.debug.logging_enabled);
+        lastError = "Failed to save config to LittleFS";
+        return false;
+    }
+
+    return true;
 }

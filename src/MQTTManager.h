@@ -1,6 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include "AsyncMqttTransport.h"
+#if defined(ARDUINO_ARCH_ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+#endif
 
 /**
  * MQTTManager — async MQTT connection management for the Modbus Sniffer.
@@ -21,6 +25,21 @@
  */
 class MQTTManager {
 public:
+    struct Diagnostics {
+        uint32_t reconnect_attempts = 0;
+        uint32_t connect_events = 0;
+        uint32_t disconnect_events = 0;
+        uint32_t publish_attempts = 0;
+        uint32_t publish_success = 0;
+        uint32_t publish_fail_not_connected = 0;
+        uint32_t publish_fail_transport = 0;
+        uint32_t last_connect_ms = 0;
+        uint32_t last_disconnect_ms = 0;
+        uint32_t last_publish_ok_ms = 0;
+        uint32_t last_publish_fail_ms = 0;
+        int last_disconnect_reason = -1;
+    };
+
     MQTTManager();
     ~MQTTManager() = default;
 
@@ -50,6 +69,9 @@ public:
     /** Human-readable reason for the current disconnect state. */
     String getStateReason();
 
+    /** Snapshot counters/timestamps for monitoring diagnostics. */
+    void getDiagnostics(Diagnostics& out) const;
+
 private:
     AsyncMqttTransport asyncTransport;
 
@@ -71,7 +93,13 @@ private:
     bool          lastConnectionState = false;
     unsigned long disconnectionTime   = 0;
     unsigned long connectionTime      = 0;
+    Diagnostics   diag;
+#if defined(ARDUINO_ARCH_ESP32)
+    mutable portMUX_TYPE diagLock = portMUX_INITIALIZER_UNLOCKED;
+#endif
 
     void trackConnectionState(bool connected);
     void processTransportEvents();
+    void lockDiag() const;
+    void unlockDiag() const;
 };

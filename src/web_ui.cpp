@@ -10,6 +10,7 @@
 #include "RawFrameStreamer.h"
 #include <LittleFS.h>
 #include <WiFi.h>
+#include <ESP.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include "PsramLimits.h"
@@ -142,6 +143,9 @@ a{color:#64b5f6;text-decoration:none}
 .form-row input,.form-row select{background:#333;color:#fff;border:1px solid #424242;padding:8px 10px;border-radius:4px;font-size:.9em}
 .form-row input:focus,.form-row select:focus{outline:none;border-color:#2196f3}
 .form-help{font-size:.78em;color:#888;margin-top:2px}
+.settings-section{margin-top:14px;padding-top:10px;border-top:1px solid #3a3a3a}
+.settings-section:first-of-type{margin-top:0;padding-top:0;border-top:none}
+.settings-subtitle{color:#90caf9;font-size:1.05em;margin:0 0 8px;font-weight:700}
 .btn{display:inline-block;padding:10px 20px;font-size:1em;font-weight:bold;border:none;border-radius:4px;cursor:pointer;text-decoration:none;transition:all .2s}
 .btn-primary{background:linear-gradient(135deg,#2196f3,#1976d2);color:#fff;box-shadow:0 4px 8px rgba(33,150,243,.35)}
 .btn-primary:hover{background:linear-gradient(135deg,#42a5f5,#2196f3);transform:translateY(-1px)}
@@ -272,6 +276,7 @@ static PsPage nav_html_ps(const char* current) {
         h += "'>"; h += label; h += "</a>";
     };
     btn("/",           "&#x2600; Home",        "home");
+    btn("/priority",   "&#x26A1; Priority",    "priority");
     btn("/live",       "&#x1F4BB; Live Modbus","live");
     btn("/monitoring", "&#x1F4CA; Monitoring", "monitoring");
     btn("/settings",   "&#x2699; Settings",    "settings");
@@ -383,6 +388,134 @@ function loadValues(){
   }).catch(()=>{});}
 loadStatus();loadValues();
 setInterval(loadStatus,STATUS_POLL_MS);setInterval(loadValues,VALUES_POLL_MS);
+</script>)";
+    page += "</body></html>";
+    ps_page_send(req, page);
+}
+
+// ============================================================
+// Page: Priority Monitor "/priority"
+// Fast monitor for registers routed into manual priority group.
+// ============================================================
+static void handle_priority_page(AsyncWebServerRequest* req) {
+    if (!check_auth(req)) return;
+    PsPage page;
+    if (!page.ok()) { req->send(503, "text/plain", "Out of PSRAM"); return; }
+    page += "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    page += "<title>Priority Monitor</title><style>"; page += CSS; page += "</style>";
+    page += "</head><body>";
+    page += nav_html_ps("priority");
+    page += "<h1>&#x26A1; Priority Monitor</h1>";
+    page += "<div class='status-bar' id='psb'><span>Connecting...</span></div>";
+    page += "<div id='priority-root'>";
+    page += "<div class='card' style='color:#888;text-align:center;padding:32px'>";
+    page += "Waiting for manual priority group values...";
+    page += "</div></div>";
+page += R"(<script>
+const STATUS_POLL_MS = 3000;
+const VALUES_POLL_MS = 1000;
+let priorityEntryCount = 0;
+function fmtAge(s){
+  if(typeof s!=='number'||s<0) return null;
+  if(s<60) return s+'s ago';
+  const m=Math.floor(s/60),r=s%60;
+  return r?m+'m '+r+'s ago':m+'m ago';
+}
+function ageColor(s){
+  if(typeof s!=='number') return '#888';
+  if(s<=30)  return '#4caf50';
+  if(s<=120) return '#ffb300';
+  return '#f44336';
+}
+function fmtInterval(ms){
+  if(typeof ms!=='number'||ms<=0) return null;
+  if(ms<1000) return ms+'ms';
+  const s=ms/1000;
+  return (s<10? s.toFixed(1):Math.round(s))+'s';
+}
+function srcBadge(src,icon){
+  const t=(src||'UNK');
+  const ic=(icon||'UNK');
+  const cls=(ic==='REV')?'badge-warn':(ic==='DOC'?'badge-ok':'badge-off');
+  return "<span class='badge "+cls+"' title='Decode source'>"+ic+" "+t+"</span>";
+}
+function regBadge(reg, regEnd){
+  if(typeof reg!=='number') return '';
+  if(typeof regEnd==='number'&&regEnd>=reg){
+    return "<span class='badge badge-off' title='Source register range'>R"+reg+"-"+regEnd+"</span>";
+  }
+  return "<span class='badge badge-off' title='Source register'>R"+reg+"</span>";
+}
+function loadStatus(entryCount){
+  fetch('/api/status').then(r=>r.json()).then(d=>{
+    document.getElementById('psb').innerHTML=
+      "<span><b>Frames</b> "+d.frames+"</span>"+
+      "<span><b>Priority Entries</b> "+entryCount+"</span>"+
+      "<span><b>Refresh</b> values "+(VALUES_POLL_MS/1000).toFixed(0)+"s / status "+(STATUS_POLL_MS/1000).toFixed(0)+"s</span>"+
+      "<span><b>Scope</b> manual priority group only (MQTT topic: priority)</span>";
+  }).catch(()=>{});
+}
+function loadValues(){
+  fetch('/api/priority_values').then(r=>r.json()).then(data=>{
+    const keys=Object.keys(data||{});
+    const root=document.getElementById('priority-root');
+    priorityEntryCount = keys.length;
+    if(!keys.length){
+      root.innerHTML="<div class='card' style='color:#888;text-align:center;padding:32px'>No values in manual priority group yet. Add register names in Settings -> Manual Priority Group and wait for matching traffic.</div>";
+      return;
+    }
+    const rows=[];
+    keys.forEach(k=>{
+      const e=data[k]||{};
+      const parsedName=k.includes('/')?k.split('/').slice(1).join('/'):k;
+      rows.push({
+        name:e.name||parsedName, src:e.src, src_icon:e.src_icon,
+        reg:e.reg, reg_end:e.reg_end, slave:e.slave,
+        v:e.v, u:e.u, age_s:e.age_s, min_ms:e.min_ms, avg_ms:e.avg_ms, max_ms:e.max_ms,
+        min_s:e.min_s, avg_s:e.avg_s, max_s:e.max_s
+      });
+    });
+    rows.sort((a,b)=>(a.name+'|'+(a.src||'')+'|'+(a.slave||0)).localeCompare(b.name+'|'+(b.src||'')+'|'+(b.slave||0)));
+    let html="<div class='card'><h2>Manual Priority Registers</h2>";
+    rows.forEach(e=>{
+      const val=(typeof e.v==='number')?e.v.toLocaleString(void 0,{maximumFractionDigits:2}):e.v;
+      const unit=e.u?'<span class="muted" style="font-size:.8em;margin-left:4px">'+e.u+'</span>':'';
+      const ageTxt=fmtAge(e.age_s);
+      const agePart=ageTxt?'<span title="Last decoded" style="color:'+ageColor(e.age_s)+'">&#x23F1; '+ageTxt+'</span>':'';
+      const minMs=(typeof e.min_ms==='number'&&e.min_ms>0)?e.min_ms:((typeof e.min_s==='number'&&e.min_s>0)?e.min_s*1000:null);
+      const avgMs=(typeof e.avg_ms==='number'&&e.avg_ms>0)?e.avg_ms:((typeof e.avg_s==='number'&&e.avg_s>0)?e.avg_s*1000:null);
+      const maxMs=(typeof e.max_ms==='number'&&e.max_ms>0)?e.max_ms:((typeof e.max_s==='number'&&e.max_s>0)?e.max_s*1000:null);
+      const intPart=(minMs&&avgMs&&maxMs)?'<span title="Min interval">&#8595;'+fmtInterval(minMs)+'</span><span title="Avg interval">&#8776;'+fmtInterval(avgMs)+'</span><span title="Max interval">&#8593;'+fmtInterval(maxMs)+'</span>':'';
+      const meta=(agePart||intPart)?'<div class="stat-meta">'+agePart+intPart+'</div>':'';
+      const slv=(typeof e.slave==='number')?('<span class="badge badge-off" title="Modbus slave">S'+e.slave+'</span>'):'';
+      html+='<div class="stat-row"><span class="stat-label">'+srcBadge(e.src,e.src_icon)+' '+regBadge(e.reg,e.reg_end)+' '+slv+' '+e.name+'</span><div class="stat-right"><span class="stat-value">'+val+unit+'</span>'+meta+'</div></div>';
+    });
+    html+="</div>";
+    root.innerHTML=html;
+  }).catch(()=>{});
+}
+function tick(){
+  loadValues();
+}
+let iv = null;
+function startPolling(){
+  if(iv!==null) return;
+  tick();
+  iv = setInterval(tick, VALUES_POLL_MS);
+}
+function stopPolling(){
+  if(iv===null) return;
+  clearInterval(iv);
+  iv = null;
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){ startPolling(); }
+  else { stopPolling(); }
+});
+loadStatus(0);
+startPolling();
+setInterval(()=>loadStatus(priorityEntryCount), STATUS_POLL_MS);
 </script>)";
     page += "</body></html>";
     ps_page_send(req, page);
@@ -555,22 +688,42 @@ static void handle_settings(AsyncWebServerRequest* req) {
         return h;
     };
 
-    // WiFi
-    page += "<div class='card'><h2>&#x1F4F6; WiFi</h2>";
+    // Network card (WiFi + Network + Security)
+    page += "<div class='card'><h2>&#x1F310; Network</h2>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F4F6; WiFi</h3>";
     page += row("SSID",     "wifi_ssid",     st.wifi.ssid);
     page += row("Password", "wifi_password", "", "password", "Leave blank to keep current");
     page += "</div>";
-
-    // Network
-    page += "<div class='card'><h2>&#x1F310; Network</h2>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F4BB; Hostname &amp; mDNS</h3>";
     page += row("Hostname (mDNS)", "network_hostname", st.network.hostname, "text", "Access at hostname.local");
     page += "<div class='form-row'><label>mDNS</label><select name='network_mdns_enabled'>";
     page += String("<option value='true'") + (st.network.mdns_enabled ? " selected" : "") + ">Enabled</option>";
     page += String("<option value='false'") + (!st.network.mdns_enabled ? " selected" : "") + ">Disabled</option>";
     page += "</select></div>";
     page += "</div>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F512; Security</h3>";
+    page += "<div class='form-row'><label>Auth</label><select name='security_auth_enabled'>";
+    page += String("<option value='false'") + (!st.security.auth_enabled ? " selected" : "") + ">Disabled</option>";
+    page += String("<option value='true'")  + (st.security.auth_enabled  ? " selected" : "") + ">Enabled</option>";
+    page += "</select></div>";
+    page += row("Username",    "security_username", st.security.username);
+    page += row("Password",    "security_password", "", "password", "Leave blank to keep current");
+    page += "<div class='form-row'><label>IP Whitelist</label><select name='security_wl_enabled'>";
+    page += String("<option value='false'") + (!st.security.ip_whitelist_enabled ? " selected" : "") + ">Disabled</option>";
+    page += String("<option value='true'")  + (st.security.ip_whitelist_enabled  ? " selected" : "") + ">Enabled</option>";
+    page += "</select></div>";
+    String ranges;
+    for (size_t i = 0; i < st.security.ip_ranges.size(); i++) {
+        if (i) ranges += "\n";
+        ranges += st.security.ip_ranges[i];
+    }
+    page += "<div class='form-row'><label>IP Ranges</label><textarea name='security_ip_ranges' rows='4' style='background:#333;color:#fff;border:1px solid #424242;border-radius:4px;padding:8px;resize:vertical;font-family:monospace;font-size:.85em'>";
+    page += ranges;
+    page += "</textarea><div class='form-help'>One per line. Format: 192.168.1.100 or 192.168.1.100-20 (range of 20 IPs)</div></div>";
+    page += "</div>";
+    page += "</div>";
 
-    // MQTT
+    // MQTT + Device Info card
     page += "<div class='card'><h2>&#x1F4E1; MQTT</h2>";
     page += row("Server",   "mqtt_server",   st.mqtt.server);
     page += row("Port",     "mqtt_port",     String(st.mqtt.port), "number");
@@ -582,14 +735,11 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += "<div class='form-row'><label>Format</label>"
             "<span class='form-help' style='display:inline-block'>"
             "JSON per group &mdash; publish timing set via Publish Tiers.</span></div>";
-
-    page += "</div>";  // close MQTT card
-
-    // Device Info
-    page += "<div class='card'><h2>&#x1F4F1; Device Info</h2>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F4F1; Device Info</h3>";
     page += row("Device Name",  "device_name", st.device_info.name,         "text", "Shown in HA device registry");
     page += row("Manufacturer", "device_mfr",  st.device_info.manufacturer);
     page += row("Model",        "device_model", st.device_info.model);
+    page += "</div>";
     page += "</div>";
 
     // Publish Configuration
@@ -599,13 +749,16 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += row("MEDIUM interval (s)", "tier_medium_s", String(st.publish.tier_interval_s[TIER_MEDIUM]), "number", "Standard groups (e.g. inverter, battery)");
     page += row("LOW interval (s)",    "tier_low_s",    String(st.publish.tier_interval_s[TIER_LOW]),    "number", "Slow/static groups (e.g. info, config)");
     page += "<h3 style='color:#b0b0b0;font-size:.95em;margin:14px 0 6px'>Per-Group Configuration</h3>";
+    page += "<div class='form-help' style='margin-bottom:8px'>Only groups with active decode mappings are shown.</div>";
     page += "<div style='overflow-x:auto'>";
     page += "<table style='width:100%;border-collapse:collapse;font-size:.88em'>";
     page += "<tr style='border-bottom:2px solid #2196f3'>"
             "<th style='text-align:left;padding:8px;color:#b0b0b0'>Group</th>"
             "<th style='text-align:left;padding:8px;color:#b0b0b0'>Tier</th>"
             "<th style='text-align:center;padding:8px;color:#b0b0b0'>Enabled</th></tr>";
-    for (int gi = 0; gi < (int)GRP_COUNT; gi++) {
+
+    auto render_group_row = [&](RegGroup g) {
+        const int gi = (int)g;
         uint8_t tier = st.publish.group_tier[gi];
         bool    en   = st.publish.group_enabled[gi];
         char tr_buf[700];
@@ -630,20 +783,74 @@ static void handle_settings(AsyncWebServerRequest* req) {
             (en ? " checked" : "")
         );
         page += tr_buf;
-    }
-    page += "</table></div></div>";
+    };
 
-    // RS485 / Modbus card
-    page += "<div class='card'><h2>&#x1F4E1; RS485 / Modbus</h2>";
+    // Settings order: show operationally important groups first.
+    static const RegGroup kSettingsPriority[] = {
+        GRP_INVERTER_AC,
+        GRP_METER,
+        GRP_PV_STRINGS,
+        GRP_INVERTER_ENERGY,
+        GRP_INVERTER_STATUS,
+        GRP_BATTERY
+    };
+
+    bool rendered[GRP_COUNT] = {};
+    for (RegGroup g : kSettingsPriority) {
+        if (g >= GRP_COUNT) continue;
+        if (!huawei_decoder_group_has_registers(g)) continue;
+        render_group_row(g);
+        rendered[g] = true;
+    }
+
+    // Fallback for any additional supported groups not listed above.
+    for (int gi = 0; gi < (int)GRP_COUNT; gi++) {
+        if (rendered[gi]) continue;
+        if (!huawei_decoder_group_has_registers((RegGroup)gi)) continue;
+        render_group_row((RegGroup)gi);
+    }
+    page += "</table></div>";
+
+    // Manual priority group (custom register list, dedicated topic/tier).
+    String manualRegs;
+    for (size_t i = 0; i < st.publish.manual_group.registers.size(); i++) {
+        if (i) manualRegs += "\n";
+        manualRegs += st.publish.manual_group.registers[i];
+    }
+    page += "<h3 style='color:#b0b0b0;font-size:.95em;margin:14px 0 6px'>Manual Priority Group</h3>";
+    page += "<div class='form-row'><label>Enabled</label><select name='manual_group_enabled'>";
+    page += String("<option value='false'") + (!st.publish.manual_group.enabled ? " selected" : "") + ">Disabled</option>";
+    page += String("<option value='true'") + (st.publish.manual_group.enabled ? " selected" : "") + ">Enabled</option>";
+    page += "</select><div class='form-help'>Route selected registers into dedicated MQTT topic <code>priority</code>.</div></div>";
+    page += "<div class='form-row'><label>Tier</label><select name='manual_group_tier'>";
+    page += String("<option value='high'") + (st.publish.manual_group.tier == TIER_HIGH ? " selected" : "") + ">HIGH</option>";
+    page += String("<option value='medium'") + (st.publish.manual_group.tier == TIER_MEDIUM ? " selected" : "") + ">MEDIUM</option>";
+    page += String("<option value='low'") + (st.publish.manual_group.tier == TIER_LOW ? " selected" : "") + ">LOW</option>";
+    page += "</select></div>";
+    page += "<div class='form-row'><label>Add Register</label>"
+            "<div style='display:flex;gap:8px;align-items:center'>"
+            "<input id='manual_reg_pick' list='known_register_names' placeholder='Select source + register' style='flex:1'>"
+            "<datalist id='known_register_names'></datalist>"
+            "<button type='button' class='btn btn-sm' style='padding:6px 10px' onclick='addManualRegister()'>Add</button>"
+            "</div>"
+            "<div id='manual_reg_hint' class='form-help'>Loading known register selectors (observed sources)...</div></div>";
+    page += "<div class='form-row'><label>Registers</label><textarea name='manual_group_registers' id='manual_group_registers' rows='6' style='background:#333;color:#fff;border:1px solid #424242;border-radius:4px;padding:8px;resize:vertical;font-family:monospace;font-size:.85em'>";
+    page += htmlEscape(manualRegs);
+    page += "</textarea><div class='form-help'>One selector per line. Use <code>register</code> for all sources, or <code>source:register</code> for exact source (<code>fc03</code>, <code>fc04</code>, <code>h41_33</code>, <code>h41_x</code>).</div></div>";
+
+    page += "</div>";
+
+    // RS485 / Modbus + Pins card
+    page += "<div class='card'><h2>&#x1F50C; RS485 / Modbus</h2>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F4E1; Modbus</h3>";
     page += row("Baud Rate",     "rs485_baud",  String(st.rs485.baud_rate),        "number");
     page += row("Slave Address", "rs485_slave", String(st.rs485.meter_slave_addr), "number");
     page += "</div>";
-
-    // Pins card
-    page += "<div class='card'><h2>&#x1F50C; Pins</h2>";
+    page += "<div class='settings-section'><h3 class='settings-subtitle'>&#x1F50C; Pins</h3>";
     page += row("RS485 RX",    "pin_rs485_rx",    String(st.pins.rs485_rx));
     page += row("RS485 TX",    "pin_rs485_tx",    String(st.pins.rs485_tx));
     page += row("RS485 DE/RE", "pin_rs485_de_re", String(st.pins.rs485_de_re));
+    page += "</div>";
     page += "</div>";
 
     // Debug card
@@ -662,10 +869,8 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += "</select><div class='form-help'>Capture raw frames selected by profile (serial mirror and/or raw stream)</div></div>";
     page += "<div class='form-row'><label>Capture Profile</label><select name='debug_raw_capture_profile'>";
     page += String("<option value='unknown_h41'") + (st.debug.raw_capture_profile == "unknown_h41" ? " selected" : "") + ">Unknown H41 (default)</option>";
-    page += String("<option value='compare_power'") + (st.debug.raw_capture_profile == "compare_power" ? " selected" : "") + ">Compare Power (H41 + FC03/04)</option>";
-    page += String("<option value='research_inverter_phase'") + (st.debug.raw_capture_profile == "research_inverter_phase" ? " selected" : "") + ">Research Inverter Phase (broad)</option>";
     page += String("<option value='all_frames'") + (st.debug.raw_capture_profile == "all_frames" ? " selected" : "") + ">All Frames (no filter)</option>";
-    page += "</select><div class='form-help'>unknown_h41: only unknown FC41. compare_power: unknown FC41 + FC03/04 power ranges. research_inverter_phase: all UNKNOWN frames + inverter production FC03/04 ranges. all_frames: capture every frame type (REQ/RSP/EXC/UNKNOWN).</div></div>";
+    page += "</select><div class='form-help'>unknown_h41: only unknown FC41 frames. all_frames: capture every frame type (REQ/RSP/EXC/UNKNOWN).</div></div>";
     page += "<h3 style='color:#b0b0b0;font-size:.95em;margin:14px 0 6px'>Raw Stream Export</h3>";
     page += "<div class='form-row'><label>Enable Stream</label><select name='raw_stream_enabled'>";
     page += String("<option value='false'") + (!st.raw_stream.enabled ? " selected" : "") + ">Disabled</option>";
@@ -682,42 +887,15 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += "</select><div class='form-help'>When disabled, avoids serial/log-page overload during capture</div></div>";
     page += "</div>";
 
-    // Security card
-    page += "<div class='card'><h2>&#x1F512; Security</h2>";
-    page += "<div class='form-row'><label>Auth</label><select name='security_auth_enabled'>";
-    page += String("<option value='false'") + (!st.security.auth_enabled ? " selected" : "") + ">Disabled</option>";
-    page += String("<option value='true'")  + (st.security.auth_enabled  ? " selected" : "") + ">Enabled</option>";
-    page += "</select></div>";
-    page += row("Username",    "security_username", st.security.username);
-    page += row("Password",    "security_password", "", "password", "Leave blank to keep current");
-    page += "<div class='form-row'><label>IP Whitelist</label><select name='security_wl_enabled'>";
-    page += String("<option value='false'") + (!st.security.ip_whitelist_enabled ? " selected" : "") + ">Disabled</option>";
-    page += String("<option value='true'")  + (st.security.ip_whitelist_enabled  ? " selected" : "") + ">Enabled</option>";
-    page += "</select></div>";
-    String ranges;
-    for (size_t i=0; i<st.security.ip_ranges.size(); i++) {
-        if (i) ranges += "\n";
-        ranges += st.security.ip_ranges[i];
-    }
-    page += "<div class='form-row'><label>IP Ranges</label><textarea name='security_ip_ranges' rows='4' style='background:#333;color:#fff;border:1px solid #424242;border-radius:4px;padding:8px;resize:vertical;font-family:monospace;font-size:.85em'>";
-    page += ranges;
-    page += "</textarea><div class='form-help'>One per line. Format: 192.168.1.100 or 192.168.1.100-20 (range of 20 IPs)</div></div>";
-    page += "</div>";
-
     page += "</div>"; // .grid
 
-    // Export / Import card
+    // Export card
     page += "<div class='card' style='margin-top:16px'>";
     page += "<h2>&#x1F4E6; Config Backup</h2>";
     page += "<div style='display:flex;flex-wrap:wrap;gap:12px;align-items:center'>";
     page += "<button type='button' class='btn btn-primary btn-sm' onclick='exportConfig()'>&#x2B07; Export config.json</button>";
-    page += "<label style='display:flex;gap:8px;align-items:center;cursor:pointer'>"
-            "<span class='btn btn-sm' style='background:#37474f'>&#x2B06; Import config.json</span>"
-            "<input type='file' id='import_file' accept='.json,application/json' style='display:none' onchange='importConfig(this)'>";
-    page += "</label>";
-    page += "<span id='import_status' style='color:#888;font-size:.85em'></span>";
     page += "</div>";
-    page += "<div class='form-help' style='margin-top:8px'>Export saves the full config (passwords redacted). Import applies and immediately reboots.</div>";
+    page += "<div class='form-help' style='margin-top:8px'>Export downloads the current on-device config as readable JSON.</div>";
     page += "</div>";
 
     // Buttons
@@ -728,7 +906,182 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += "</form>";
 
     // JS
-    page += R"(<script>
+page += R"(<script>
+const SOURCE_TOKENS = ['fc03','fc04','h41_33','h41_x'];
+const SOURCE_LABEL = {'fc03':'FC03','fc04':'FC04','h41_33':'H41-33','h41_x':'H41-X'};
+const PICKER_CATALOG_SEPARATOR = '----- Catalog-Only (Known, Not Seen Yet) -----';
+let KNOWN_REG_NAMES = new Set();
+let DISPLAY_TO_SELECTOR = new Map();
+function sourceTagToToken(src){
+  const s = String(src||'').trim().toUpperCase();
+  if(s === 'FC03') return 'fc03';
+  if(s === 'FC04') return 'fc04';
+  if(s === 'H41-33') return 'h41_33';
+  if(s === 'H41-X') return 'h41_x';
+  return '';
+}
+function normalizeSourceToken(v){
+  return String(v||'').trim().toLowerCase().replace(/-/g,'_');
+}
+function isKnownSourceToken(v){
+  return SOURCE_TOKENS.includes(normalizeSourceToken(v));
+}
+function selectorSource(v){
+  const raw = String(v||'').trim();
+  const idx = raw.indexOf(':');
+  if(idx <= 0) return '';
+  return normalizeSourceToken(raw.slice(0, idx));
+}
+function selectorRegister(v){
+  const raw = String(v||'').trim();
+  if(!raw) return '';
+  const idx = raw.indexOf(':');
+  if(idx <= 0) return raw;
+  return raw.slice(idx + 1).trim();
+}
+function canonicalizeManualSelector(v){
+  const raw = String(v||'').trim();
+  if(!raw) return '';
+  if(raw === PICKER_CATALOG_SEPARATOR) return '';
+  if(DISPLAY_TO_SELECTOR.has(raw)) return DISPLAY_TO_SELECTOR.get(raw);
+  const idx = raw.indexOf(':');
+  if(idx <= 0) return raw;
+  const src = normalizeSourceToken(raw.slice(0, idx));
+  const reg = raw.slice(idx + 1).trim();
+  if(!src || !reg) return raw;
+  if(!isKnownSourceToken(src)) return raw;
+  return `${src}:${reg}`;
+}
+function normalizeManualRegs(lines){
+  const out = [];
+  const seen = new Set();
+  for(const raw of lines){
+    const v = canonicalizeManualSelector(raw);
+    if(!v) continue;
+    if(seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+function resolveManualReg(v){
+  return canonicalizeManualSelector(v);
+}
+function inferDefaultSources(regName){
+  const n = String(regName||'').trim().toLowerCase();
+  // When no runtime observation exists yet, prefer realistic defaults:
+  // proprietary-prefixed names are typically H41-only; others are FC03-first.
+  if(n.startsWith('h41_')) return ['h41_33'];
+  return ['fc03'];
+}
+function collectObservedSources(){
+  return fetch('/api/values')
+    .then(r=>r.json())
+    .then(data=>{
+      const out = new Map();
+      if(!data || typeof data !== 'object') return out;
+      Object.keys(data).forEach(k=>{
+        const e = data[k] || {};
+        const name = String(e.name||'').trim();
+        const srcTok = sourceTagToToken(e.src);
+        if(!name || !srcTok) return;
+        if(!out.has(name)) out.set(name, new Set());
+        out.get(name).add(srcTok);
+      });
+      return out;
+    })
+    .catch(()=>new Map());
+}
+function addManualRegister(){
+  const pick = document.getElementById('manual_reg_pick');
+  const ta = document.getElementById('manual_group_registers');
+  if(!pick || !ta) return;
+  const v = resolveManualReg(pick.value);
+  if(!v){ pick.value = ''; return; }
+  const reg = selectorRegister(v);
+  if(KNOWN_REG_NAMES.size > 0 && !KNOWN_REG_NAMES.has(reg)){
+    alert("Unknown register name: " + reg);
+    return;
+  }
+  const src = selectorSource(v);
+  if(src && !isKnownSourceToken(src)){
+    alert("Unknown source token in selector: " + src);
+    return;
+  }
+  const regs = normalizeManualRegs(ta.value.split('\n'));
+  if(!regs.includes(v)) regs.push(v);
+  ta.value = regs.join('\n');
+  pick.value = '';
+}
+function renderKnownRegisterPicker(arr, observedSourcesByName){
+  KNOWN_REG_NAMES = new Set();
+  DISPLAY_TO_SELECTOR = new Map();
+  const dl = document.getElementById('known_register_names');
+  if(dl) dl.innerHTML = '';
+  const items = [];
+  arr.forEach(it=>{
+    if(it && typeof it === 'object' && !Array.isArray(it)){
+      const name = String(it.name||'').trim();
+      if(!name) return;
+      const group = String(it.group||'other').trim() || 'other';
+      items.push({name, group});
+      return;
+    }
+    const name = String(it||'').trim();
+    if(!name) return;
+    items.push({name, group:'other'});
+  });
+  items.sort((a,b)=>(a.group+'|'+a.name).localeCompare(b.group+'|'+b.name));
+  const runtimeOptions = [];
+  const catalogOptions = [];
+  items.forEach(it=>{
+    KNOWN_REG_NAMES.add(it.name);
+    const observedSet = observedSourcesByName ? observedSourcesByName.get(it.name) : null;
+    const isObserved = !!(observedSet && observedSet.size > 0);
+    let sources = isObserved
+      ? SOURCE_TOKENS.filter(src=>observedSet.has(src))
+      : inferDefaultSources(it.name);
+    sources.forEach(src=>{
+      const display = `${SOURCE_LABEL[src]} :: ${it.group} :: ${it.name}`;
+      const selector = `${src}:${it.name}`;
+      (isObserved ? runtimeOptions : catalogOptions).push({display, selector});
+    });
+  });
+  let optionCount = 0;
+  const appendOption = (entry)=>{
+    DISPLAY_TO_SELECTOR.set(entry.display, entry.selector);
+    if(!dl) return;
+    const o = document.createElement('option');
+    o.value = entry.display;
+    o.label = entry.selector;
+    dl.appendChild(o);
+    optionCount++;
+  };
+  runtimeOptions.forEach(appendOption);
+  if(dl && runtimeOptions.length && catalogOptions.length){
+    const sep = document.createElement('option');
+    sep.value = PICKER_CATALOG_SEPARATOR;
+    sep.label = '';
+    dl.appendChild(sep);
+  }
+  catalogOptions.forEach(appendOption);
+  const hint = document.getElementById('manual_reg_hint');
+  if(hint){
+    hint.textContent = `Known registers: ${items.length}, selectors: ${optionCount} (${runtimeOptions.length} runtime, ${catalogOptions.length} catalog-default). Runtime selectors are listed first; after "${PICKER_CATALOG_SEPARATOR}" entries are catalog-only defaults. Picker adds exact source selectors; use plain register manually for all sources.`;
+  }
+}
+function loadKnownRegisters(){
+  fetch('/api/register_catalog')
+    .then(r=>r.json())
+    .then(arr=>{
+      if(!Array.isArray(arr)) throw new Error('invalid register list');
+      return collectObservedSources().then(obs=>renderKnownRegisterPicker(arr, obs));
+    })
+    .catch(()=>{
+      const hint = document.getElementById('manual_reg_hint');
+      if(hint) hint.textContent = 'Could not load known names. Save validation still runs on backend.';
+    });
+}
 function collectSettings(){
   const f = document.getElementById('sf');
   const d = {wifi:{},mqtt:{},device_info:{},network:{},security:{ip_ranges:[]},rs485:{}};
@@ -786,9 +1139,35 @@ function collectSettings(){
     const k=sel.name.replace('grp_tier_','');
     if(!(k in d.publish.group_enabled)) d.publish.group_enabled[k]=false;
   });
+  const manualRegs = normalizeManualRegs(
+    (f.manual_group_registers.value||'').split('\n').map(resolveManualReg)
+  );
+  f.manual_group_registers.value = manualRegs.join('\n');
+  d.publish.manual_group = {
+    enabled: f.manual_group_enabled.value === 'true',
+    tier: f.manual_group_tier.value,
+    registers: manualRegs
+  };
   return d;
 }
 function save(){
+  const f = document.getElementById('sf');
+  const regs = normalizeManualRegs(
+    (f.manual_group_registers.value||'').split('\n').map(resolveManualReg)
+  );
+  f.manual_group_registers.value = regs.join('\n');
+  if(KNOWN_REG_NAMES.size > 0){
+    const bad = regs.filter(sel=>{
+      const src = selectorSource(sel);
+      if(src && !isKnownSourceToken(src)) return true;
+      const reg = selectorRegister(sel);
+      return !KNOWN_REG_NAMES.has(reg);
+    });
+    if(bad.length){
+      alert("Invalid manual-group selector(s):\n" + bad.join('\n'));
+      return;
+    }
+  }
   if(!confirm('Save settings and restart?')) return;
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(collectSettings())})
@@ -800,8 +1179,18 @@ function reboot(){
 }
 function exportConfig(){
   fetch('/api/config/export')
-    .then(r=>r.blob())
-    .then(blob=>{
+    .then(r=>{
+      if(!r.ok) return r.text().then(t=>{throw new Error(t || ('HTTP '+r.status));});
+      return r.text();
+    })
+    .then(txt=>{
+      let pretty = txt;
+      try{
+        pretty = JSON.stringify(JSON.parse(txt), null, 2) + '\r\n';
+      }catch(_){
+        // Keep original body when JSON parse fails unexpectedly.
+      }
+      const blob = new Blob([pretty],{type:'application/json;charset=utf-8'});
       const a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
       a.download='config.json';
@@ -809,25 +1198,7 @@ function exportConfig(){
       URL.revokeObjectURL(a.href);
     }).catch(e=>alert('Export failed: '+e));
 }
-function importConfig(input){
-  const file=input.files[0]; if(!file) return;
-  const st=document.getElementById('import_status');
-  st.textContent='Reading\u2026';
-  const reader=new FileReader();
-  reader.onload=function(e){
-    let json;
-    try{ json=JSON.parse(e.target.result); }
-    catch(err){ st.textContent='\u274C Invalid JSON: '+err; input.value=''; return; }
-    if(!confirm('Apply imported config and reboot?')){ st.textContent=''; input.value=''; return; }
-    st.textContent='Uploading\u2026';
-    fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(json)})
-    .then(r=>{ if(r.ok) st.textContent='\u2705 Applied \u2014 rebooting\u2026';
-               else r.text().then(t=>{ st.textContent='\u274C '+t; input.value=''; }); })
-    .catch(e=>{ st.textContent='\u274C '+e; input.value=''; });
-  };
-  reader.readAsText(file);
-}
+document.addEventListener('DOMContentLoaded', loadKnownRegisters);
 </script>)";
     page += "</body></html>";
     ps_page_send(req, page);
@@ -843,40 +1214,61 @@ static void handle_monitoring(AsyncWebServerRequest* req) {
     page += "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
     page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
     page += "<title>Monitoring &#x2014; Sniffer</title><style>"; page += CSS;
-    page += ".sr{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid #333;font-size:.9em}";
-    page += ".sr:last-child{border-bottom:none}.sl{color:#b0b0b0}.sv{font-weight:600}";
     page += ".led{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:middle}";
+    page += ".status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}";
+    page += ".info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}";
     page += "</style></head><body>";
     page += nav_html_ps("monitoring");
     page += "<h1>&#x1F4CA; System Monitoring</h1>";
     page += "<div id='mon'><div class='card' style='color:#888'>Loading...</div></div>";
     page += R"(<script>
 const LC={green:'#4caf50',cyan:'#00bcd4',yellow:'#ffb300',red:'#f44336',magenta:'#9c27b0',blue:'#2196f3',white:'#e0e0e0'};
+const MONITORING_POLL_MS=15000;
 function fmtUp(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h+'h '+m+'m '+sc+'s';}
-function fmtB(b){return b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?(b/1024).toFixed(0)+' KB':b+' B';}
-function sr(l,v){return '<div class="sr"><span class="sl">'+l+'</span><span class="sv">'+v+'</span></div>';}
-function badge(ok){return ok?"<span class='badge badge-ok'>connected</span>":"<span class='badge badge-warn'>offline</span>";}
+function fmtB(b){if(typeof b!=='number'||!isFinite(b))return '-';return b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?(b/1024).toFixed(0)+' KB':b+' B';}
+function fmtN(n){return(typeof n==='number'&&isFinite(n))?n.toLocaleString():'-';}
+function fmtP(part,total){if(typeof part!=='number'||typeof total!=='number'||!isFinite(part)||!isFinite(total)||total<=0)return '-';return((part/total)*100).toFixed(1)+'%';}
+function fmtAgeS(s){return(typeof s==='number'&&isFinite(s))?fmtUp(s):'-';}
+function sr(l,v){return '<div class="stat-row"><span class="stat-label">'+l+'</span><span class="stat-right"><span class="stat-value">'+v+'</span></span></div>';}
+function stateBadge(ok,onLabel,offLabel){return ok?"<span class='badge badge-ok'>"+onLabel+"</span>":"<span class='badge badge-warn'>"+offLabel+"</span>";}
+function badge(ok){return stateBadge(ok,'connected','offline');}
 function renderMon(d){
   const led=d.led_state||'white',lc=LC[led]||'#9e9e9e';
-  let html='<div class="grid">';
-  html+='<div class="card"><h2>&#x1F4BB; System</h2>';
-  html+=sr('Hostname',d.hostname+'.local')+sr('IP',d.ip)+sr('Uptime',fmtUp(d.uptime_s));
-  html+=sr('Code Date',d.code_date||'-');
-  html+=sr('Build','<span style="font-size:.8em">'+(d.build_ts||'-')+'</span>');
-  html+=sr('LED','<span class="led" style="background:'+lc+'"></span>'+d.led_state+' &mdash; '+d.led_meaning);
+  const ag=Array.isArray(d.mqtt_availability_groups)?d.mqtt_availability_groups:[];
+  const offlineKeys=ag.filter(g=>g&&g.offline).map(g=>g.key).join(', ');
+  const lfsFree=(typeof d.lfs_free==='number'&&isFinite(d.lfs_free))?d.lfs_free:((typeof d.lfs_total==='number'&&typeof d.lfs_used==='number')?Math.max(0,d.lfs_total-d.lfs_used):null);
+  let html='<div class="status-grid">';
+  html+='<div class="card"><h2>&#x1F4F6; Connectivity</h2>';
+  html+=sr('Status',badge(d.wifi_ok))+sr('SSID',d.wifi_ssid||'-');
+  html+=sr('IP',d.ip||'-')+sr('RSSI',(typeof d.rssi==='number'&&isFinite(d.rssi))?(d.rssi+' dBm'):'-');
+  html+=sr('MAC','<span style="font-size:.85em">'+(d.mac||'-')+'</span>');
+  html+='<div class="settings-section"><h3 class="settings-subtitle">&#x1F4E1; MQTT</h3></div>';
+  html+=sr('MQTT',badge(d.mqtt_ok))+sr('Broker',(d.mqtt_broker||'-'));
+  html+=sr('Client ID',(d.mqtt_client_id||'-'));
   html+='</div>';
-  html+='<div class="card"><h2>&#x1F4F6; Network</h2>';
-  html+=sr('WiFi RSSI',d.rssi+' dBm')+sr('MAC','<span style="font-size:.85em">'+(d.mac||'-')+'</span>');
-  html+=sr('MQTT',badge(d.mqtt_ok))+sr('Broker','<span style="font-size:.85em">'+(d.mqtt_broker||'-')+'</span>');
-  html+=sr('Client ID','<span style="font-size:.85em">'+(d.mqtt_client_id||'-')+'</span>');
-  html+='</div>';
-  html+='<div class="card"><h2>&#x1F9E0; Memory</h2>';
-  html+=sr('Heap Free',fmtB(d.heap_free))+sr('PSRAM Free',fmtB(d.psram_free));
-  html+=sr('MCU Temp',(d.mcu_temp!=null)?d.mcu_temp.toFixed(1)+'&thinsp;&deg;C':'-');
+  html+='<div class="card"><h2>&#x1F50E; MQTT Diagnostics</h2>';
+  html+=sr('State Reason',d.mqtt_reason||'-');
+  html+=sr('Current Session',d.mqtt_ok?fmtAgeS(d.mqtt_conn_duration_s):('disconnected for '+fmtAgeS(d.mqtt_disc_duration_s)));
+  html+=sr('Reconnect Attempts',fmtN(d.mqtt_reconnect_attempts));
+  html+=sr('Connect Events',fmtN(d.mqtt_connect_events));
+  html+=sr('Disconnect Events',fmtN(d.mqtt_disconnect_events));
+  html+=sr('Publish Attempts',fmtN(d.mqtt_publish_attempts));
+  html+=sr('Publish Success',fmtN(d.mqtt_publish_success));
+  html+=sr('Publish Fail (No Conn)',fmtN(d.mqtt_publish_fail_not_connected));
+  html+=sr('Publish Fail (Transport)',fmtN(d.mqtt_publish_fail_transport));
+  html+=sr('Last Publish OK',fmtAgeS(d.mqtt_last_publish_ok_age_s));
+  html+=sr('Last Publish Fail',fmtAgeS(d.mqtt_last_publish_fail_age_s));
+  html+=sr('Last Disconnect',fmtAgeS(d.mqtt_last_disconnect_age_s)+' (reason '+(d.mqtt_last_disconnect_reason!=null?d.mqtt_last_disconnect_reason:'-')+')');
+  html+=sr('Avail Offline Groups',fmtN(d.mqtt_avail_groups_offline));
+  html+=sr('Avail Offline Transitions',fmtN(d.mqtt_avail_offline_transitions_total));
+  html+=sr('Avail Online Transitions',fmtN(d.mqtt_avail_online_transitions_total));
+  html+=sr('Most Stale Group',(d.mqtt_avail_worst_group||'-')+' @ '+fmtAgeS(d.mqtt_avail_worst_age_s));
+  html+=sr('Priority Group Age',fmtAgeS(d.mqtt_avail_priority_age_s)+(d.mqtt_avail_priority_offline?' (offline)':''));
+  html+=sr('Offline Group Keys',offlineKeys||'-');
   html+='</div>';
   html+='<div class="card"><h2>&#x1F527; Sniffer</h2>';
-  html+=sr('Frames Decoded',d.frames_decoded.toLocaleString())+sr('Groups Seen',d.groups_seen);
-  html+=sr('RS&#x2011;485 Baud',d.rs485_baud.toLocaleString())+sr('Slave Address',d.rs485_slave);
+  html+=sr('Frames Decoded',fmtN(d.frames_decoded))+sr('Groups Seen',fmtN(d.groups_seen));
+  html+=sr('RS&#x2011;485 Baud',fmtN(d.rs485_baud))+sr('Slave Address',fmtN(d.rs485_slave));
   html+=sr('Raw Capture Profile',d.raw_capture_profile||'-');
   html+=sr('Raw Stream',d.raw_stream_enabled?(d.raw_stream_connected?'connected':'disconnected'):'disabled');
   html+=sr('Raw Stream Queue',(d.raw_stream_queued||0)+' / '+(d.raw_stream_capacity||0));
@@ -885,10 +1277,27 @@ function renderMon(d){
   html+=sr('Raw Stream Reconnects',(d.raw_stream_reconnects||0).toLocaleString());
   html+=sr('Raw Stream Failed Connects',(d.raw_stream_failed_connects||0).toLocaleString());
   html+='</div></div>';
+  html+='<div class="info-grid">';
+  html+='<div class="card"><h2>&#x1F9E0; Memory Usage</h2>';
+  html+=sr('Heap Free',fmtB(d.heap_free))+sr('Heap Largest Block',fmtB(d.heap_largest));
+  html+=sr('Heap Total',fmtB(d.heap_total))+sr('PSRAM Free',fmtB(d.psram_free));
+  html+=sr('PSRAM Largest Block',fmtB(d.psram_largest))+sr('PSRAM Total',fmtB(d.psram_total));
+  html+='</div>';
+  html+='<div class="card"><h2>&#x1F4BB; System Details</h2>';
+  html+=sr('Hostname',d.hostname?d.hostname+'.local':'-');
+  html+=sr('Uptime',fmtUp(d.uptime_s||0))+sr('Code Date',d.code_date||'-');
+  html+=sr('Chip Temp',(d.mcu_temp!=null)?d.mcu_temp.toFixed(1)+'&thinsp;&deg;C':'-');
+  html+=sr('LED','<span class="led" style="background:'+lc+'"></span>'+(d.led_state||'-')+' &mdash; '+(d.led_meaning||'-'));
+  html+='</div>';
+  html+='<div class="card"><h2>LittleFS Information</h2>';
+  html+=sr('Mount',stateBadge(d.lfs_ok,'mounted','unavailable'))+sr('Total',fmtB(d.lfs_total));
+  html+=sr('Used',fmtB(d.lfs_used))+sr('Free',fmtB(lfsFree));
+  html+=sr('Used Percent',fmtP(d.lfs_used,d.lfs_total));
+  html+='</div></div>';
   document.getElementById('mon').innerHTML=html;
 }
 function pollMon(){fetch('/api/monitoring/cards?t='+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(renderMon).catch(()=>{});}
-pollMon();setInterval(pollMon,5000);
+pollMon();setInterval(pollMon,MONITORING_POLL_MS);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')pollMon();});
 </script>)";
     page += "</body></html>";
@@ -1156,18 +1565,40 @@ pollOta();
 static void handle_api_monitoring_cards(AsyncWebServerRequest* req) {
     if (!check_auth(req)) return;
     JsonDocument doc;
+    const bool wifiOk = WiFi.isConnected();
+    doc["wifi_ok"]      = wifiOk;
     doc["ip"]           = WiFi.localIP().toString();
     doc["mac"]          = WiFi.macAddress();
+    doc["wifi_ssid"]    = WiFi.SSID();
     doc["hostname"]     = s_cfg ? s_cfg->getSettings().network.hostname : "unknown";
     doc["uptime_s"]     = (millis() - s_boot_ms) / 1000;
-    doc["heap_free"]    = esp_get_free_heap_size();
-    doc["psram_free"]   = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    doc["heap_free"]    = (uint32_t)ESP.getFreeHeap();
+    doc["heap_total"]   = (uint32_t)ESP.getHeapSize();
+    doc["heap_largest"] = (uint32_t)ESP.getMaxAllocHeap();
+    doc["psram_free"]   = (uint32_t)ESP.getFreePsram();
+    doc["psram_total"]  = (uint32_t)ESP.getPsramSize();
+    doc["psram_largest"] = (uint32_t)ESP.getMaxAllocPsram();
     doc["rssi"]         = WiFi.RSSI();
     doc["mqtt_ok"]      = s_mqtt && s_mqtt->isConnected();
+    doc["mqtt_reason"]  = s_mqtt ? s_mqtt->getStateReason() : "not initialised";
+    doc["mqtt_conn_duration_s"] = s_mqtt ? (uint32_t)(s_mqtt->getConnectionDuration() / 1000UL) : 0;
+    doc["mqtt_disc_duration_s"] = s_mqtt ? (uint32_t)(s_mqtt->getDisconnectionDuration() / 1000UL) : 0;
     doc["build_ts"]     = BUILD_TIMESTAMP;
     doc["code_date"]    = CODE_DATE;
+    bool lfsOk = LittleFS.begin(false);
+    uint32_t lfsTotal = 0;
+    uint32_t lfsUsed = 0;
+    if (lfsOk) {
+        lfsTotal = (uint32_t)LittleFS.totalBytes();
+        lfsUsed = (uint32_t)LittleFS.usedBytes();
+    }
+    doc["lfs_ok"] = lfsOk;
+    doc["lfs_total"] = lfsTotal;
+    doc["lfs_used"] = lfsUsed;
+    doc["lfs_free"] = (lfsTotal >= lfsUsed) ? (lfsTotal - lfsUsed) : 0;
     if (s_cfg) {
         const Settings& st = s_cfg->getSettings();
+        if (!wifiOk && st.wifi.ssid.length() > 0) doc["wifi_ssid"] = st.wifi.ssid;
         doc["mqtt_broker"]    = st.mqtt.server + ":" + String(st.mqtt.port);
         doc["mqtt_client_id"] = st.mqtt.client_id;
         doc["rs485_baud"]     = st.rs485.baud_rate;
@@ -1188,6 +1619,79 @@ static void handle_api_monitoring_cards(AsyncWebServerRequest* req) {
     doc["raw_stream_dropped"] = rs.dropped_frames;
     doc["raw_stream_failed_connects"] = rs.failed_connects;
     doc["raw_stream_reconnects"] = rs.reconnect_count;
+
+    MQTTManager::Diagnostics mqttDiag{};
+    if (s_mqtt) s_mqtt->getDiagnostics(mqttDiag);
+    doc["mqtt_reconnect_attempts"] = mqttDiag.reconnect_attempts;
+    doc["mqtt_connect_events"] = mqttDiag.connect_events;
+    doc["mqtt_disconnect_events"] = mqttDiag.disconnect_events;
+    doc["mqtt_publish_attempts"] = mqttDiag.publish_attempts;
+    doc["mqtt_publish_success"] = mqttDiag.publish_success;
+    doc["mqtt_publish_fail_not_connected"] = mqttDiag.publish_fail_not_connected;
+    doc["mqtt_publish_fail_transport"] = mqttDiag.publish_fail_transport;
+    doc["mqtt_last_disconnect_reason"] = mqttDiag.last_disconnect_reason;
+    if (mqttDiag.last_connect_ms > 0) {
+        doc["mqtt_last_connect_age_s"] = (uint32_t)((millis() - mqttDiag.last_connect_ms) / 1000UL);
+    }
+    if (mqttDiag.last_disconnect_ms > 0) {
+        doc["mqtt_last_disconnect_age_s"] = (uint32_t)((millis() - mqttDiag.last_disconnect_ms) / 1000UL);
+    }
+    if (mqttDiag.last_publish_ok_ms > 0) {
+        doc["mqtt_last_publish_ok_age_s"] = (uint32_t)((millis() - mqttDiag.last_publish_ok_ms) / 1000UL);
+    }
+    if (mqttDiag.last_publish_fail_ms > 0) {
+        doc["mqtt_last_publish_fail_age_s"] = (uint32_t)((millis() - mqttDiag.last_publish_fail_ms) / 1000UL);
+    }
+
+    MQTTAvailabilitySnapshot av{};
+    mqtt_get_availability_snapshot(&av);
+    uint32_t totalOnlineTransitions = 0;
+    uint32_t totalOfflineTransitions = 0;
+    uint32_t offlineGroups = 0;
+    int worstGroup = -1;
+    uint32_t worstAgeSec = 0;
+    JsonArray groupArr = doc["mqtt_availability_groups"].to<JsonArray>();
+    const uint32_t nowMs = millis();
+    for (int g = 0; g < GRP_COUNT; g++) {
+        if (s_cfg && !s_cfg->getSettings().publish.group_enabled[g]) continue;
+        const MQTTAvailabilityGroupStats& gs = av.groups[g];
+        totalOnlineTransitions += gs.online_transitions;
+        totalOfflineTransitions += gs.offline_transitions;
+        if (gs.offline) offlineGroups++;
+        uint32_t ageSec = 0;
+        bool hasAge = false;
+        if (gs.last_seen_ms > 0) {
+            hasAge = true;
+            ageSec = (uint32_t)((nowMs - gs.last_seen_ms) / 1000UL);
+            if (ageSec >= worstAgeSec) {
+                worstAgeSec = ageSec;
+                worstGroup = g;
+            }
+        }
+
+        JsonObject o = groupArr.add<JsonObject>();
+        o["key"] = GROUP_INFO[g].key;
+        o["label"] = GROUP_INFO[g].label;
+        o["offline"] = gs.offline;
+        o["online_transitions"] = gs.online_transitions;
+        o["offline_transitions"] = gs.offline_transitions;
+        if (hasAge) o["age_s"] = ageSec;
+        if (gs.last_online_ms > 0) o["last_online_age_s"] = (uint32_t)((nowMs - gs.last_online_ms) / 1000UL);
+        if (gs.last_offline_ms > 0) o["last_offline_age_s"] = (uint32_t)((nowMs - gs.last_offline_ms) / 1000UL);
+    }
+    doc["mqtt_avail_online_transitions_total"] = totalOnlineTransitions;
+    doc["mqtt_avail_offline_transitions_total"] = totalOfflineTransitions;
+    doc["mqtt_avail_groups_offline"] = offlineGroups;
+    if (worstGroup >= 0) {
+        doc["mqtt_avail_worst_group"] = GROUP_INFO[worstGroup].key;
+        doc["mqtt_avail_worst_age_s"] = worstAgeSec;
+    }
+    const MQTTAvailabilityGroupStats& pg = av.groups[(int)GRP_PRIORITY_MANUAL];
+    if (pg.last_seen_ms > 0) {
+        doc["mqtt_avail_priority_age_s"] = (uint32_t)((nowMs - pg.last_seen_ms) / 1000UL);
+    }
+    doc["mqtt_avail_priority_offline"] = pg.offline;
+
     const float mcuT = temperatureRead();
     if (!isnan(mcuT)) doc["mcu_temp"] = mcuT;
     doc["led_state"]    = led_state_str();
@@ -1270,7 +1774,9 @@ static void handle_api_config_post(AsyncWebServerRequest* req, uint8_t* data, si
         req->send(200, "text/plain", "OK");
         scheduleRestart();  // deferred Ã¢â‚¬â€ lets response flush before reboot
     } else {
-        req->send(400, "text/plain", "Save failed Ã¢â‚¬â€ check /logs for details");
+        String err = s_cfg->getLastError();
+        if (err.length() == 0) err = "Save failed";
+        req->send(400, "text/plain", err);
     }
 }
 
@@ -1289,6 +1795,28 @@ static void handle_api_reboot(AsyncWebServerRequest* req) {
 static void handle_api_values(AsyncWebServerRequest* req) {
     if (!check_auth(req)) return;
     req->send(200, "application/json", mqtt_get_last_values_json());
+}
+
+// ============================================================
+// API: GET /api/priority_values — cached values in manual priority group
+// ============================================================
+static void handle_api_priority_values(AsyncWebServerRequest* req) {
+    if (!check_auth(req)) return;
+    AsyncWebServerResponse* resp =
+        req->beginResponse(200, "application/json", mqtt_get_priority_values_json());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    req->send(resp);
+}
+
+// ============================================================
+// API: GET /api/register_catalog — unique known register names + group metadata
+// ============================================================
+static void handle_api_register_catalog(AsyncWebServerRequest* req) {
+    if (!check_auth(req)) return;
+    AsyncWebServerResponse* resp =
+        req->beginResponse(200, "application/json", huawei_decoder_get_known_register_catalog_json());
+    resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    req->send(resp);
 }
 
 // ============================================================
@@ -1349,17 +1877,14 @@ static void handle_api_ota_status(AsyncWebServerRequest* req) {
 }
 
 // ============================================================
-// API: GET /api/config/export Ã¢â‚¬â€ download raw config.json
+// API: GET /api/config/export Ã¢â‚¬â€ download pretty config.json
 // ============================================================
 static void handle_api_config_export(AsyncWebServerRequest* req) {
     if (!check_auth(req)) return;
-    // Stream config.json from LittleFS with download header
-    if (!LittleFS.exists("/config.json")) {
-        req->send(404, "text/plain", "config.json not found");
-        return;
-    }
-    AsyncWebServerResponse* resp =
-        req->beginResponse(LittleFS, "/config.json", "application/json");
+    if (!s_cfg) { req->send(500, "text/plain", "ConfigManager not set"); return; }
+    String body = s_cfg->getSettingsJsonPretty(false);
+    if (body.length() == 0) { req->send(500, "text/plain", "Failed to build config export"); return; }
+    AsyncWebServerResponse* resp = req->beginResponse(200, "application/json", body);
     resp->addHeader("Content-Disposition", "attachment; filename=\"config.json\"");
     resp->addHeader("Cache-Control", "no-store");
     req->send(resp);
@@ -1503,6 +2028,7 @@ void web_ui_init(ConfigManager* cfg, MQTTManager* mqtt, OTAManager* ota, bool ap
     s_server = new AsyncWebServer(80);
 
     s_server->on("/",               HTTP_GET,  handle_root);
+    s_server->on("/priority",        HTTP_GET,  handle_priority_page);
     s_server->on("/live",            HTTP_GET,  handle_live_page);
     s_server->on("/monitoring",      HTTP_GET,  handle_monitoring);
     s_server->on("/settings",        HTTP_GET,  handle_settings);
@@ -1515,6 +2041,8 @@ void web_ui_init(ConfigManager* cfg, MQTTManager* mqtt, OTAManager* ota, bool ap
     s_server->on("/api/config/export",    HTTP_GET,  handle_api_config_export);
     s_server->on("/api/reboot",           HTTP_POST, handle_api_reboot);
     s_server->on("/api/values",           HTTP_GET,  handle_api_values);
+    s_server->on("/api/priority_values",  HTTP_GET,  handle_api_priority_values);
+    s_server->on("/api/register_catalog", HTTP_GET,  handle_api_register_catalog);
     s_server->on("/api/live_values",      HTTP_GET,  handle_api_live_values);
     s_server->on("/api/ota_arm",          HTTP_POST, handle_api_ota_arm);
     s_server->on("/api/ota_status",       HTTP_GET,  handle_api_ota_status);

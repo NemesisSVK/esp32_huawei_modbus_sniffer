@@ -31,3 +31,7 @@ scripts/update_mcp_sync_state.ps1
 .clangd
 .vscode/c_cpp_properties.json
 .vscode/launch.json
+
+# Local analysis/workbench artifacts
+.kilo/
+sniffer priority history.csv

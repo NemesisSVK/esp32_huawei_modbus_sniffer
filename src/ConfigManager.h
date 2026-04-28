@@ -58,7 +58,7 @@ struct Settings {
         bool logging_enabled        = true;  // mirrors debug.logging_enabled in config.json
         bool sensor_refresh_metrics = false; // show min/avg/max update intervals on home page
         bool raw_frame_dump         = false; // capture raw traffic selected by debug.raw_capture_profile (serial and/or raw stream)
-        String raw_capture_profile  = "unknown_h41"; // unknown_h41 | compare_power | research_inverter_phase | all_frames
+        String raw_capture_profile  = "unknown_h41"; // unknown_h41 | all_frames
     } debug;
 
     struct RawStream {
@@ -80,6 +80,15 @@ struct Settings {
         int     tier_interval_s[TIER_COUNT] = { 10, 30, 60 };  // HIGH, MEDIUM, LOW defaults
         uint8_t group_tier[GRP_COUNT];    // PublishTier per group; initialised by setDefaults()
         bool    group_enabled[GRP_COUNT]; // false = group is completely silent (no data, no availability)
+        struct ManualGroup {
+            bool enabled = false;
+            uint8_t tier = TIER_HIGH;
+            // Selector format:
+            // - "<register_name>"             -> match all sources for that register
+            // - "<source_token>:<register>"   -> match specific source only
+            //   source_token: fc03 | fc04 | h41_33 | h41_x
+            std::vector<String> registers;
+        } manual_group;
     } publish;
 };
 
@@ -101,9 +110,12 @@ public:
 
     Settings&       getSettings()       { return settings; }
     const Settings& getSettings() const { return settings; }
+    const String&   getLastError() const { return lastError; }
 
     /** Return current settings as a JSON string (for web API). */
     String getSettingsJson() const;
+    /** Return current settings as pretty JSON (beautifier-style). */
+    String getSettingsJsonPretty(bool redactPasswords = false) const;
 
     /**
      * Update settings from a JSON body (from web UI POST).
@@ -114,6 +126,7 @@ public:
 private:
     Settings settings;
     bool     configLoaded = false;
+    String   lastError;
 
     void setDefaults();
     bool parseJson(const JsonDocument& doc);

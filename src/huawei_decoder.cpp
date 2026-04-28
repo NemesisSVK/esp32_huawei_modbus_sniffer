@@ -6,12 +6,13 @@
 #include "UnifiedLogger.h"
 #include "RawFrameStreamer.h"
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <string.h>
 
 // ============================================================
 // Register descriptor with group tag
 // ============================================================
-typedef enum : uint8_t { U16, I16, U32, I32, I32ABS, STRING } ValType;
+typedef enum : uint8_t { U16, I16, U32, I32, I32ABS, F32, STRING } ValType;
 // STRING: register is ASCII text — used only for group detection; value decode is skipped.
 
 typedef struct {
@@ -29,7 +30,7 @@ typedef struct {
 // ============================================================
 static const RegDesc KNOWN_REGS[] = {
     // ---- GRP_METER (37100–37138) ----
-    { 37100, 1, U16,     1, "",     "meter_status",           GRP_METER },
+    { 37100, 1, U16,     1, "",     "status",                 GRP_METER },
     { 37101, 2, I32,    10, "V",    "grid_a_voltage",         GRP_METER },
     { 37103, 2, I32,    10, "V",    "grid_b_voltage",         GRP_METER },
     { 37105, 2, I32,    10, "V",    "grid_c_voltage",         GRP_METER },
@@ -43,14 +44,58 @@ static const RegDesc KNOWN_REGS[] = {
     { 37119, 2, I32ABS,100, "kWh",  "grid_exported_energy",   GRP_METER },
     { 37121, 2, I32,   100, "kWh",  "grid_imported_energy",   GRP_METER },
     { 37123, 2, I32,   100, "kvarh","grid_reactive_energy",   GRP_METER },
-    { 37125, 1, U16,     1, "",     "meter_type",             GRP_METER },
+    { 37125, 1, U16,     1, "",     "type",                   GRP_METER },
     { 37126, 2, I32,    10, "V",    "grid_ab_voltage",        GRP_METER },
     { 37128, 2, I32,    10, "V",    "grid_bc_voltage",        GRP_METER },
     { 37130, 2, I32,    10, "V",    "grid_ca_voltage",        GRP_METER },
     { 37132, 2, I32,     1, "W",    "grid_a_power",           GRP_METER },
     { 37134, 2, I32,     1, "W",    "grid_b_power",           GRP_METER },
     { 37136, 2, I32,     1, "W",    "grid_c_power",           GRP_METER },
-    { 37138, 1, U16,     1, "",     "meter_type_check",       GRP_METER },
+    { 37138, 1, U16,     1, "",     "type_validation",        GRP_METER },
+
+    // ---- GRP_METER (Direct DTSU666-H bus observed map, slave 0x0B, FC03) ----
+    // Values are IEEE754 float32 (big-endian words) from direct meter traffic.
+    { 2102, 2, F32,      1, "A",    "grid_a_current",          GRP_METER },
+    { 2104, 2, F32,      1, "A",    "grid_b_current",          GRP_METER },
+    { 2106, 2, F32,      1, "A",    "grid_c_current",          GRP_METER },
+    { 2108, 2, F32,      1, "V",    "grid_a_voltage",          GRP_METER },
+    { 2110, 2, F32,      1, "V",    "grid_b_voltage",          GRP_METER },
+    { 2112, 2, F32,      1, "V",    "grid_c_voltage",          GRP_METER },
+    { 2114, 2, F32,      1, "V",    "equivalent_phase_voltage", GRP_METER },  // provisional NEW: likely equivalent/averaged phase voltage (L-N)
+    { 2116, 2, F32,      1, "V",    "grid_ab_voltage",         GRP_METER },
+    { 2118, 2, F32,      1, "V",    "grid_bc_voltage",         GRP_METER },
+    { 2120, 2, F32,      1, "V",    "grid_ca_voltage",         GRP_METER },
+    { 2122, 2, F32,      1, "V",    "equivalent_line_voltage",  GRP_METER },  // provisional NEW: likely equivalent/averaged line voltage (L-L)
+    { 2124, 2, F32,      1, "Hz",   "frequency",               GRP_METER },
+    { 2126, 2, F32,      1, "W",    "meter_active_power",      GRP_METER },
+    { 2128, 2, F32,      1, "W",    "grid_a_power",            GRP_METER },
+    { 2130, 2, F32,      1, "W",    "grid_b_power",            GRP_METER },
+    { 2132, 2, F32,      1, "W",    "grid_c_power",            GRP_METER },
+    { 2134, 2, F32,      1, "var",  "meter_reactive_power",    GRP_METER },
+    { 2136, 2, F32,      1, "var",  "grid_a_reactive_power",   GRP_METER },
+    { 2138, 2, F32,      1, "var",  "grid_b_reactive_power",   GRP_METER },
+    { 2140, 2, F32,      1, "var",  "grid_c_reactive_power",   GRP_METER },
+    { 2142, 2, F32,      1, "VA",   "apparent_power",          GRP_METER },
+    { 2144, 2, F32,      1, "VA",   "grid_a_apparent_power",   GRP_METER },
+    { 2146, 2, F32,      1, "VA",   "grid_b_apparent_power",   GRP_METER },
+    { 2148, 2, F32,      1, "VA",   "grid_c_apparent_power",   GRP_METER },
+    { 2150, 2, F32,      1, "",     "meter_power_factor",      GRP_METER },
+    { 2152, 2, F32,      1, "",     "grid_a_power_factor",     GRP_METER },
+    { 2154, 2, F32,      1, "",     "grid_b_power_factor",     GRP_METER },
+    { 2156, 2, F32,      1, "",     "grid_c_power_factor",     GRP_METER },
+    { 2158, 2, F32,      1, "kWh",  "net_active_energy_total",   GRP_METER },  // provisional NEW: likely imported-exported total
+    { 2160, 2, F32,      1, "kWh",  "net_active_energy_a",       GRP_METER },  // provisional NEW: likely phase A imported-exported
+    { 2162, 2, F32,      1, "kWh",  "net_active_energy_b",       GRP_METER },  // provisional NEW: likely phase B imported-exported
+    { 2164, 2, F32,      1, "kWh",  "net_active_energy_c",       GRP_METER },  // provisional NEW: likely phase C imported-exported
+    { 2166, 2, F32,      1, "kWh",  "imported_energy_total",     GRP_METER },  // confirmed from HA total consumption correlation
+    { 2168, 2, F32,      1, "kWh",  "imported_energy_a_total",   GRP_METER },  // provisional NEW: likely phase A imported total
+    { 2170, 2, F32,      1, "kWh",  "imported_energy_b_total",   GRP_METER },  // provisional NEW: likely phase B imported total
+    { 2172, 2, F32,      1, "kWh",  "imported_energy_c_total",   GRP_METER },  // provisional NEW: likely phase C imported total
+    { 2174, 2, F32,      1, "kWh",  "exported_energy_total",     GRP_METER },  // confirmed from HA total export correlation
+    { 2176, 2, F32,      1, "kWh",  "exported_energy_a_total",   GRP_METER },  // provisional NEW: likely phase A exported total
+    { 2178, 2, F32,      1, "kWh",  "exported_energy_b_total",   GRP_METER },  // provisional NEW: likely phase B exported total
+    { 2180, 2, F32,      1, "kWh",  "exported_energy_c_total",   GRP_METER },  // provisional NEW: likely phase C exported total
+    { 2222, 2, F32,      1, "kvarh","reactive_energy_total",     GRP_METER },  // confirmed from reactive power integral correlation
 
     // ---- GRP_METER (FC0x41 fast-path confirmed power mirrors) ----
     { 16300, 2, I32,     1, "W",    "meter_active_power_fast", GRP_METER },
@@ -59,7 +104,7 @@ static const RegDesc KNOWN_REGS[] = {
     { 16309, 1, I16,     1, "W",    "grid_c_power_fast",       GRP_METER },
     { 16312, 1, I16,     1, "var",  "meter_reactive_power_fast", GRP_METER },
     // ---- GRP_INVERTER_AC (32064–32095 + related AC telemetry) ----
-    { 32064, 2, I32,     1, "W",    "input_power",            GRP_INVERTER_AC },
+    { 32064, 2, I32,     1, "W",    "dc_input_power",         GRP_INVERTER_AC },
     { 32066, 1, U16,    10, "V",    "line_voltage_ab",        GRP_INVERTER_AC },
     { 32067, 1, U16,    10, "V",    "line_voltage_bc",        GRP_INVERTER_AC },
     { 32068, 1, U16,    10, "V",    "line_voltage_ca",        GRP_INVERTER_AC },
@@ -70,30 +115,23 @@ static const RegDesc KNOWN_REGS[] = {
     { 32074, 2, I32,  1000, "A",    "phase_b_current",        GRP_INVERTER_AC },
     { 32076, 2, I32,  1000, "A",    "phase_c_current",        GRP_INVERTER_AC },
     { 32078, 2, I32,     1, "W",    "peak_active_power",      GRP_INVERTER_AC },
-    { 32080, 2, I32,     1, "W",    "active_power",           GRP_INVERTER_AC },
-    { 32082, 2, I32,     1, "var",  "reactive_power",         GRP_INVERTER_AC },
-    { 32084, 1, I16,  1000, "",     "power_factor",           GRP_INVERTER_AC },
+    { 32080, 2, I32,     1, "W",    "inverter_active_power",  GRP_INVERTER_AC },
+    { 32082, 2, I32,     1, "var",  "inverter_reactive_power",GRP_INVERTER_AC },
+    { 32084, 1, I16,  1000, "",     "inverter_power_factor",  GRP_INVERTER_AC },
     { 32085, 1, U16,   100, "Hz",   "grid_frequency",         GRP_INVERTER_AC },
     { 32086, 1, U16,   100, "%",    "efficiency",             GRP_INVERTER_AC },
     { 32087, 1, I16,    10, "degC", "internal_temperature",   GRP_INVERTER_AC },
     { 32088, 1, U16,  1000, "MOhm", "insulation_resistance",  GRP_INVERTER_AC },
-    { 32095, 2, I32,     1, "W",    "active_power_fast",      GRP_INVERTER_AC },
+    { 32095, 2, I32,     1, "W",    "inverter_active_power_fast", GRP_INVERTER_AC },
     { 42056, 2, U32,     1, "W",    "mppt_predicted_power",   GRP_INVERTER_AC },
 
     // ---- GRP_INVERTER_STATUS (32000–32174) ----
     { 32000, 1, U16,     1, "",     "state_1",                GRP_INVERTER_STATUS },
     { 32002, 1, U16,     1, "",     "state_2",                GRP_INVERTER_STATUS },
     { 32003, 2, U32,     1, "",     "state_3",                GRP_INVERTER_STATUS },
-    { 32008, 1, U16,     1, "",     "alarm_1",                GRP_INVERTER_STATUS },
-    { 32009, 1, U16,     1, "",     "alarm_2",                GRP_INVERTER_STATUS },
-    { 32010, 1, U16,     1, "",     "alarm_3",                GRP_INVERTER_STATUS },
     { 32089, 1, U16,     1, "",     "device_status",          GRP_INVERTER_STATUS },
     { 32090, 1, U16,     1, "",     "fault_code",             GRP_INVERTER_STATUS },
-    { 32091, 2, U32,     1, "s",    "startup_time",           GRP_INVERTER_STATUS },
-    { 32093, 2, U32,     1, "s",    "shutdown_time",          GRP_INVERTER_STATUS },
-    { 32172, 2, U32,     1, "",     "latest_active_alarm_sn", GRP_INVERTER_STATUS },
-    { 32174, 2, U32,     1, "",     "latest_hist_alarm_sn",   GRP_INVERTER_STATUS },
-    { 42045, 1, U16,     1, "",     "off_grid_mode",          GRP_INVERTER_STATUS },
+    { 42045, 1, U16,     1, "",     "inverter_off_grid_mode", GRP_INVERTER_STATUS },
 
     // ---- GRP_INVERTER_ENERGY (32106–32230) ----
     { 32106, 2, U32,   100, "kWh",  "accumulated_yield",      GRP_INVERTER_ENERGY },
@@ -112,46 +150,6 @@ static const RegDesc KNOWN_REGS[] = {
     { 32226, 2, U32,   100, "kWh",  "mppt8_dc_yield",         GRP_INVERTER_ENERGY },
     { 32228, 2, U32,   100, "kWh",  "mppt9_dc_yield",         GRP_INVERTER_ENERGY },
     { 32230, 2, U32,   100, "kWh",  "mppt10_dc_yield",        GRP_INVERTER_ENERGY },
-
-    // ---- GRP_INVERTER_INFO (30000–37201) ----
-    // STRING entries: decoded for group detection only — value publish is skipped.
-    // Numeric entries are fully decoded and published.
-    { 30000, 15, STRING,  1, "",     "model_name",             GRP_INVERTER_INFO },
-    { 30015, 10, STRING,  1, "",     "serial_number",          GRP_INVERTER_INFO },
-    { 30025, 10, STRING,  1, "",     "pn",                     GRP_INVERTER_INFO },
-    { 30035, 15, STRING,  1, "",     "firmware_version",       GRP_INVERTER_INFO },
-    { 30050, 15, STRING,  1, "",     "software_version",       GRP_INVERTER_INFO },
-    { 30068,  2, U32,     1, "",     "protocol_version",       GRP_INVERTER_INFO },
-    { 30070,  1, U16,     1, "",     "model_id",               GRP_INVERTER_INFO },
-    { 30071,  1, U16,     1, "",     "nb_pv_strings",          GRP_INVERTER_INFO },
-    { 30072,  1, U16,     1, "",     "nb_mpp_tracks",          GRP_INVERTER_INFO },
-    { 30073,  2, U32,     1, "W",    "rated_power",            GRP_INVERTER_INFO },
-    { 30075,  2, U32,     1, "W",    "p_max",                  GRP_INVERTER_INFO },
-    { 30110,  1, U16,     1, "",     "sw_unique_id",           GRP_INVERTER_INFO },
-    // Reverse-engineering watchlist (unmapped/proprietary telemetry, raw words)
-    { 16000,  1, U16,     1, "",     "h41_16000_raw",          GRP_INVERTER_INFO },
-    { 16001,  1, U16,     1, "",     "h41_16001_raw",          GRP_INVERTER_INFO },
-    { 30207,  2, U32,     1, "",     "subdevice_support_flag", GRP_INVERTER_INFO },
-    { 30209,  1, U16,     1, "",     "h41_30209_raw",          GRP_INVERTER_INFO },
-    { 30210,  1, U16,     1, "",     "h41_30210_raw",          GRP_INVERTER_INFO },
-    { 30283,  1, U16,     1, "",     "h41_30283_raw",          GRP_INVERTER_INFO },
-    { 30284,  1, U16,     1, "",     "h41_30284_raw",          GRP_INVERTER_INFO },
-    { 30285,  1, U16,     1, "",     "h41_30285_raw",          GRP_INVERTER_INFO },
-    { 30286,  1, U16,     1, "",     "h41_30286_raw",          GRP_INVERTER_INFO },
-    { 35304,  1, U16,     1, "",     "h41_35304_raw",          GRP_INVERTER_INFO },
-    { 35306,  1, U16,     1, "",     "h41_35306_raw",          GRP_INVERTER_INFO },
-    { 35307,  1, U16,     1, "",     "h41_35307_raw",          GRP_INVERTER_INFO },
-    { 40000,  1, U16,     1, "",     "h41_40000_raw",          GRP_INVERTER_INFO },
-    { 40001,  1, U16,     1, "",     "h41_40001_raw",          GRP_INVERTER_INFO },
-    { 42017,  1, U16,     1, "",     "h41_42017_raw",          GRP_INVERTER_INFO },
-    { 42018,  1, U16,     1, "",     "h41_42018_raw",          GRP_INVERTER_INFO },
-    { 31000, 15, STRING,  1, "",     "hardware_version",       GRP_INVERTER_INFO },
-    { 31015, 10, STRING,  1, "",     "monitoring_board_sn",    GRP_INVERTER_INFO },
-    { 31025, 15, STRING,  1, "",     "monitoring_sw_version",  GRP_INVERTER_INFO },
-    { 31040, 15, STRING,  1, "",     "master_dsp_version",     GRP_INVERTER_INFO },
-    { 31055, 15, STRING,  1, "",     "slave_dsp_version",      GRP_INVERTER_INFO },
-    { 37200,  1, U16,     1, "",     "nb_optimizers",          GRP_INVERTER_INFO },
-    { 37201,  1, U16,     1, "",     "nb_online_optimizers",   GRP_INVERTER_INFO },
 
     // ---- GRP_PV_STRINGS (32016–32063) ----
     { 32016, 1, I16,    10, "V",    "pv01_voltage",           GRP_PV_STRINGS },
@@ -212,133 +210,10 @@ static const RegDesc KNOWN_REGS[] = {
     { 37765, 2, I32,     1, "W",    "battery_power",          GRP_BATTERY },
     { 37780, 2, U32,   100, "kWh",  "battery_total_charge",   GRP_BATTERY },
     { 37782, 2, U32,   100, "kWh",  "battery_total_discharge",GRP_BATTERY },
-    { 37784, 2, U32,   100, "kWh",  "battery_day_charge",     GRP_BATTERY },
-    { 37786, 2, U32,   100, "kWh",  "battery_day_discharge",  GRP_BATTERY },
-    { 37829, 1, U16,     1, "",     "h41_37829_raw",          GRP_BATTERY },
-    { 37830, 1, U16,     1, "",     "h41_37830_raw",          GRP_BATTERY },
-    { 37831, 1, U16,     1, "",     "h41_37831_raw",          GRP_BATTERY },
-    { 37918, 1, U16,     1, "",     "h41_37918_raw",          GRP_BATTERY },
-    { 37919, 1, U16,     1, "",     "h41_37919_raw",          GRP_BATTERY },
-    { 37928, 1, U16,     1, "",     "h41_37928_raw",          GRP_BATTERY },
+    { 37784, 2, U32,   100, "kWh",  "battery_daily_charge",   GRP_BATTERY },
+    { 37786, 2, U32,   100, "kWh",  "battery_daily_discharge",GRP_BATTERY },
     { 37926, 1, U16,     1, "",     "battery_soh_calib_status", GRP_BATTERY },
     { 37927, 1, U16,     1, "",     "battery_soh_calib_soc_low", GRP_BATTERY },
-    { 37518, 1, U16,     1, "",     "h41_37518_raw",          GRP_BATTERY },
-    { 37519, 1, U16,     1, "",     "h41_37519_raw",          GRP_BATTERY },
-
-    // ---- GRP_BATTERY_UNIT1 (37000–37068) ----
-    { 37000, 1, U16,     1, "",     "u1_status",              GRP_BATTERY_UNIT1 },
-    { 37001, 2, I32,     1, "W",    "u1_charge_power",        GRP_BATTERY_UNIT1 },
-    { 37003, 1, U16,    10, "V",    "u1_bus_voltage",         GRP_BATTERY_UNIT1 },
-    { 37004, 1, U16,    10, "%",    "u1_soc",                 GRP_BATTERY_UNIT1 },
-    { 37006, 1, U16,     1, "",     "u1_working_mode_b",      GRP_BATTERY_UNIT1 },
-    { 37007, 2, U32,     1, "W",    "u1_rated_charge_pwr",    GRP_BATTERY_UNIT1 },
-    { 37009, 2, U32,     1, "W",    "u1_rated_discharge_pwr", GRP_BATTERY_UNIT1 },
-    { 37014, 1, U16,     1, "",     "u1_fault_id",            GRP_BATTERY_UNIT1 },
-    { 37015, 2, U32,   100, "kWh",  "u1_day_charge",          GRP_BATTERY_UNIT1 },
-    { 37017, 2, U32,   100, "kWh",  "u1_day_discharge",       GRP_BATTERY_UNIT1 },
-    { 37021, 1, I16,    10, "A",    "u1_bus_current",         GRP_BATTERY_UNIT1 },
-    { 37022, 1, I16,    10, "degC", "u1_temperature",         GRP_BATTERY_UNIT1 },
-    { 37025, 1, U16,     1, "min",  "u1_remaining_time",      GRP_BATTERY_UNIT1 },
-    { 37066, 2, U32,   100, "kWh",  "u1_total_charge",        GRP_BATTERY_UNIT1 },
-    { 37068, 2, U32,   100, "kWh",  "u1_total_discharge",     GRP_BATTERY_UNIT1 },
-
-    // ---- GRP_BATTERY_UNIT2 (37700–37755) ----
-    { 37738, 1, U16,    10, "%",    "u2_soc",                 GRP_BATTERY_UNIT2 },
-    { 37741, 1, U16,     1, "",     "u2_status",              GRP_BATTERY_UNIT2 },
-    { 37743, 2, I32,     1, "W",    "u2_charge_power",        GRP_BATTERY_UNIT2 },
-    { 37746, 2, U32,   100, "kWh",  "u2_day_charge",          GRP_BATTERY_UNIT2 },
-    { 37748, 2, U32,   100, "kWh",  "u2_day_discharge",       GRP_BATTERY_UNIT2 },
-    { 37750, 1, U16,    10, "V",    "u2_bus_voltage",         GRP_BATTERY_UNIT2 },
-    { 37751, 1, I16,    10, "A",    "u2_bus_current",         GRP_BATTERY_UNIT2 },
-    { 37752, 1, I16,    10, "degC", "u2_temperature",         GRP_BATTERY_UNIT2 },
-    { 37753, 2, U32,   100, "kWh",  "u2_total_charge",        GRP_BATTERY_UNIT2 },
-    { 37755, 2, U32,   100, "kWh",  "u2_total_discharge",     GRP_BATTERY_UNIT2 },
-
-    // ---- GRP_BATTERY_PACKS (38200–38463) — Unit 1 & 2, Packs 1–3 ----
-    // Unit 1 Pack 1
-    { 38228, 1, U16,     1, "",     "u1p1_working_status",    GRP_BATTERY_PACKS },
-    { 38229, 1, U16,    10, "%",    "u1p1_soc",               GRP_BATTERY_PACKS },
-    { 38233, 2, I32,     1, "W",    "u1p1_power",             GRP_BATTERY_PACKS },
-    { 38235, 1, U16,    10, "V",    "u1p1_voltage",           GRP_BATTERY_PACKS },
-    { 38236, 1, I16,    10, "A",    "u1p1_current",           GRP_BATTERY_PACKS },
-    { 38238, 2, U32,   100, "kWh",  "u1p1_total_charge",      GRP_BATTERY_PACKS },
-    { 38240, 2, U32,   100, "kWh",  "u1p1_total_discharge",   GRP_BATTERY_PACKS },
-    // Unit 1 Pack 2
-    { 38270, 1, U16,     1, "",     "u1p2_working_status",    GRP_BATTERY_PACKS },
-    { 38271, 1, U16,    10, "%",    "u1p2_soc",               GRP_BATTERY_PACKS },
-    { 38275, 2, I32,     1, "W",    "u1p2_power",             GRP_BATTERY_PACKS },
-    { 38277, 1, U16,    10, "V",    "u1p2_voltage",           GRP_BATTERY_PACKS },
-    { 38278, 1, I16,    10, "A",    "u1p2_current",           GRP_BATTERY_PACKS },
-    // Unit 1 Pack 3
-    { 38312, 1, U16,     1, "",     "u1p3_working_status",    GRP_BATTERY_PACKS },
-    { 38313, 1, U16,    10, "%",    "u1p3_soc",               GRP_BATTERY_PACKS },
-    { 38317, 2, I32,     1, "W",    "u1p3_power",             GRP_BATTERY_PACKS },
-    { 38319, 1, U16,    10, "V",    "u1p3_voltage",           GRP_BATTERY_PACKS },
-    { 38320, 1, I16,    10, "A",    "u1p3_current",           GRP_BATTERY_PACKS },
-    // Unit 2 Pack 1
-    { 38354, 1, U16,     1, "",     "u2p1_working_status",    GRP_BATTERY_PACKS },
-    { 38355, 1, U16,    10, "%",    "u2p1_soc",               GRP_BATTERY_PACKS },
-    { 38359, 2, I32,     1, "W",    "u2p1_power",             GRP_BATTERY_PACKS },
-    { 38361, 1, U16,    10, "V",    "u2p1_voltage",           GRP_BATTERY_PACKS },
-    { 38362, 1, I16,    10, "A",    "u2p1_current",           GRP_BATTERY_PACKS },
-    { 38364, 2, U32,   100, "kWh",  "u2p1_total_charge",      GRP_BATTERY_PACKS },
-    { 38366, 2, U32,   100, "kWh",  "u2p1_total_discharge",   GRP_BATTERY_PACKS },
-    // Unit 2 Pack 2
-    { 38396, 1, U16,     1, "",     "u2p2_working_status",    GRP_BATTERY_PACKS },
-    { 38397, 1, U16,    10, "%",    "u2p2_soc",               GRP_BATTERY_PACKS },
-    { 38401, 2, I32,     1, "W",    "u2p2_power",             GRP_BATTERY_PACKS },
-    { 38403, 1, U16,    10, "V",    "u2p2_voltage",           GRP_BATTERY_PACKS },
-    { 38404, 1, I16,    10, "A",    "u2p2_current",           GRP_BATTERY_PACKS },
-    // Unit 2 Pack 3
-    { 38438, 1, U16,     1, "",     "u2p3_working_status",    GRP_BATTERY_PACKS },
-    { 38439, 1, U16,    10, "%",    "u2p3_soc",               GRP_BATTERY_PACKS },
-    { 38443, 2, I32,     1, "W",    "u2p3_power",             GRP_BATTERY_PACKS },
-    { 38445, 1, U16,    10, "V",    "u2p3_voltage",           GRP_BATTERY_PACKS },
-    { 38446, 1, I16,    10, "A",    "u2p3_current",           GRP_BATTERY_PACKS },
-    { 38448, 2, U32,   100, "kWh",  "u2p3_total_charge",      GRP_BATTERY_PACKS },
-    { 38450, 2, U32,   100, "kWh",  "u2p3_total_discharge",   GRP_BATTERY_PACKS },
-    // Pack temperatures (all units, all packs)
-    { 38452, 1, I16,    10, "degC", "u1p1_max_temp",          GRP_BATTERY_PACKS },
-    { 38453, 1, I16,    10, "degC", "u1p1_min_temp",          GRP_BATTERY_PACKS },
-    { 38454, 1, I16,    10, "degC", "u1p2_max_temp",          GRP_BATTERY_PACKS },
-    { 38455, 1, I16,    10, "degC", "u1p2_min_temp",          GRP_BATTERY_PACKS },
-    { 38456, 1, I16,    10, "degC", "u1p3_max_temp",          GRP_BATTERY_PACKS },
-    { 38457, 1, I16,    10, "degC", "u1p3_min_temp",          GRP_BATTERY_PACKS },
-    { 38458, 1, I16,    10, "degC", "u2p1_max_temp",          GRP_BATTERY_PACKS },
-    { 38459, 1, I16,    10, "degC", "u2p1_min_temp",          GRP_BATTERY_PACKS },
-    { 38460, 1, I16,    10, "degC", "u2p2_max_temp",          GRP_BATTERY_PACKS },
-    { 38461, 1, I16,    10, "degC", "u2p2_min_temp",          GRP_BATTERY_PACKS },
-    { 38462, 1, I16,    10, "degC", "u2p3_max_temp",          GRP_BATTERY_PACKS },
-    { 38463, 1, I16,    10, "degC", "u2p3_min_temp",          GRP_BATTERY_PACKS },
-
-    // ---- GRP_BATTERY_SETTINGS (47000–47675) ----
-    { 47000, 1, U16,     1, "",     "u1_product_model",       GRP_BATTERY_SETTINGS },
-    { 47004, 1, I16,     1, "",     "working_mode_a",         GRP_BATTERY_SETTINGS },
-    { 47027, 1, U16,     1, "",     "tou_price_enabled",      GRP_BATTERY_SETTINGS },
-    { 47075, 2, U32,     1, "W",    "max_charge_power",       GRP_BATTERY_SETTINGS },
-    { 47077, 2, U32,     1, "W",    "max_discharge_power",    GRP_BATTERY_SETTINGS },
-    { 47079, 2, I32,     1, "W",    "grid_tied_pwr_limit",    GRP_BATTERY_SETTINGS },
-    { 47081, 1, U16,    10, "%",    "charge_cutoff_soc",      GRP_BATTERY_SETTINGS },
-    { 47082, 1, U16,    10, "%",    "discharge_cutoff_soc",   GRP_BATTERY_SETTINGS },
-    { 47086, 1, U16,     1, "",     "working_mode",           GRP_BATTERY_SETTINGS },
-    { 47087, 1, U16,     1, "",     "charge_from_grid",       GRP_BATTERY_SETTINGS },
-    { 47088, 1, U16,    10, "%",    "grid_charge_cutoff_soc", GRP_BATTERY_SETTINGS },
-    { 47089, 1, U16,     1, "",     "u2_product_model",       GRP_BATTERY_SETTINGS },
-    { 47100, 1, U16,     1, "",     "forcible_mode",          GRP_BATTERY_SETTINGS },
-    { 47101, 1, U16,    10, "%",    "forcible_soc",           GRP_BATTERY_SETTINGS },
-    { 47102, 1, U16,    10, "%",    "backup_power_soc",       GRP_BATTERY_SETTINGS },
-    { 47242, 2, U32,     1, "W",    "charge_from_grid_power", GRP_BATTERY_SETTINGS },
-    { 47415, 1, U16,     1, "",     "active_pwr_ctrl_mode",   GRP_BATTERY_SETTINGS },
-    { 47416, 2, I32,     1, "W",    "max_feed_grid_power_w",  GRP_BATTERY_SETTINGS },
-    { 47418, 1, I16,    10, "%",    "max_feed_grid_pct",      GRP_BATTERY_SETTINGS },
-    { 47675, 2, I32,     1, "W",    "default_max_feed_in_pwr",GRP_BATTERY_SETTINGS },
-
-    // ---- GRP_SDONGLE (37498–37516) ----
-    { 37498, 2, U32,  1000, "kW",   "sdongle_pv_power",       GRP_SDONGLE },
-    { 37500, 2, U32,  1000, "kW",   "sdongle_load_power",     GRP_SDONGLE },
-    { 37502, 2, I32,  1000, "kW",   "sdongle_grid_power",     GRP_SDONGLE },
-    { 37504, 2, I32,  1000, "kW",   "sdongle_battery_power",  GRP_SDONGLE },
-    { 37516, 2, I32,  1000, "kW",   "sdongle_total_power",    GRP_SDONGLE },
 };
 
 #define KNOWN_REG_COUNT (sizeof(KNOWN_REGS) / sizeof(KNOWN_REGS[0]))
@@ -355,31 +230,14 @@ static const uint8_t FC_HUAWEI_EXT = 0x41;
 
 enum RawCaptureProfile : uint8_t {
     RAW_CAPTURE_UNKNOWN_H41 = 0,
-    RAW_CAPTURE_COMPARE_POWER,
-    RAW_CAPTURE_RESEARCH_INVERTER_PHASE,
     RAW_CAPTURE_ALL_FRAMES,
 };
 
 static RawCaptureProfile s_raw_capture_profile = RAW_CAPTURE_UNKNOWN_H41;
-
-#define MAX_CAPTURE_PENDING_REQUESTS 8
-
-typedef struct {
-    uint8_t  slave_addr;
-    uint8_t  function_code;
-    uint16_t start_addr;
-    uint16_t reg_count;
-    uint32_t timestamp_ms;
-    bool     valid;
-} CapturePendingReq;
-
-static CapturePendingReq s_capture_pending[MAX_CAPTURE_PENDING_REQUESTS];
 static uint32_t s_raw_frame_seq = 0;
 
 static RawCaptureProfile parse_capture_profile(const char* profile) {
     if (!profile) return RAW_CAPTURE_UNKNOWN_H41;
-    if (strcmp(profile, "compare_power") == 0) return RAW_CAPTURE_COMPARE_POWER;
-    if (strcmp(profile, "research_inverter_phase") == 0) return RAW_CAPTURE_RESEARCH_INVERTER_PHASE;
     if (strcmp(profile, "all_frames") == 0) return RAW_CAPTURE_ALL_FRAMES;
     return RAW_CAPTURE_UNKNOWN_H41;
 }
@@ -393,7 +251,6 @@ void huawei_decoder_set_raw_dump(bool en) { s_raw_dump = en; }
 
 void huawei_decoder_set_raw_capture_profile(const char* profile) {
     s_raw_capture_profile = parse_capture_profile(profile);
-    memset(s_capture_pending, 0, sizeof(s_capture_pending));
 }
 
 // These remain in the public API for compatibility but delegate to web_ui
@@ -409,103 +266,67 @@ bool huawei_decoder_group_enabled(RegGroup g) {
     return group_is_enabled(g);
 }
 
-// ============================================================
-// Raw frame capture + dump (for debug.raw_frame_dump setting)
-// ============================================================
-
-typedef struct {
-    uint16_t start_addr;
-    uint16_t end_addr; // inclusive
-} CaptureRange;
-
-static bool overlap_range(uint16_t start, uint16_t count,
-                          uint16_t r_start, uint16_t r_end) {
-    if (count == 0) return false;
-    const uint32_t req_start = start;
-    const uint32_t req_end = req_start + (uint32_t)count - 1U;
-    return !(req_end < r_start || req_start > r_end);
+bool huawei_decoder_group_has_registers(RegGroup g) {
+    if (g >= GRP_COUNT) return false;
+    for (uint16_t i = 0; i < KNOWN_REG_COUNT; i++) {
+        if (KNOWN_REGS[i].group == g) return true;
+    }
+    return false;
 }
 
-static bool request_in_ranges(uint16_t start, uint16_t count,
-                              const CaptureRange* ranges, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        if (overlap_range(start, count, ranges[i].start_addr, ranges[i].end_addr)) {
+bool huawei_decoder_is_known_register_name(const char* name) {
+    if (!name || !name[0]) return false;
+    for (uint16_t i = 0; i < KNOWN_REG_COUNT; i++) {
+        if (strcmp(KNOWN_REGS[i].name, name) == 0) return true;
+    }
+    return false;
+}
+
+String huawei_decoder_get_known_register_catalog_json() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (uint16_t i = 0; i < KNOWN_REG_COUNT; i++) {
+        const char* name = KNOWN_REGS[i].name;
+        bool exists = false;
+        for (JsonVariantConst v : arr) {
+            JsonObjectConst o = v.as<JsonObjectConst>();
+            const char* cur = o["name"].as<const char*>();
+            if (cur && strcmp(cur, name) == 0) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) continue;
+        JsonObject o = arr.add<JsonObject>();
+        o["name"] = name;
+        const RegGroup g = KNOWN_REGS[i].group;
+        if (g < GRP_COUNT) {
+            o["group"] = GROUP_INFO[g].key;
+            o["group_label"] = GROUP_INFO[g].label;
+        } else {
+            o["group"] = "other";
+            o["group_label"] = "Other";
+        }
+    }
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+bool huawei_decoder_get_register_group(const char* name, RegGroup* out_group) {
+    if (!name || !out_group) return false;
+    for (size_t i = 0; i < KNOWN_REG_COUNT; i++) {
+        if (strcmp(KNOWN_REGS[i].name, name) == 0) {
+            *out_group = KNOWN_REGS[i].group;
             return true;
         }
     }
     return false;
 }
 
-static bool request_matches_profile(const ModbusFrame* f) {
-    if (!f || f->type != FRAME_REQUEST) return false;
-    if (f->function_code != FC_READ_HOLDING_REGS && f->function_code != FC_READ_INPUT_REGS) return false;
-
-    static const CaptureRange ranges_compare_power[] = {
-        { 32064, 32095 }, // inverter AC / phase values
-        { 37100, 37138 }, // meter + per-phase meter power
-    };
-    static const CaptureRange ranges_research_inverter_phase[] = {
-        { 32016, 32095 }, // inverter production path: PV strings + inverter AC (W/V/A)
-        { 42056, 42057 }, // mppt_predicted_power
-    };
-
-    if (s_raw_capture_profile == RAW_CAPTURE_COMPARE_POWER) {
-        return request_in_ranges(f->req_start_addr, f->req_reg_count,
-                                 ranges_compare_power,
-                                 sizeof(ranges_compare_power) / sizeof(ranges_compare_power[0]));
-    }
-    if (s_raw_capture_profile == RAW_CAPTURE_RESEARCH_INVERTER_PHASE) {
-        return request_in_ranges(f->req_start_addr, f->req_reg_count,
-                                 ranges_research_inverter_phase,
-                                 sizeof(ranges_research_inverter_phase) / sizeof(ranges_research_inverter_phase[0]));
-    }
-    return false;
-}
-
-static void capture_store_request(const ModbusFrame* f) {
-    int oldest = 0;
-    uint32_t oldest_ts = UINT32_MAX;
-    for (int i = 0; i < MAX_CAPTURE_PENDING_REQUESTS; i++) {
-        if (!s_capture_pending[i].valid) { oldest = i; break; }
-        if (s_capture_pending[i].timestamp_ms < oldest_ts) {
-            oldest_ts = s_capture_pending[i].timestamp_ms;
-            oldest = i;
-        }
-    }
-    s_capture_pending[oldest] = {
-        f->slave_addr,
-        f->function_code,
-        f->req_start_addr,
-        f->req_reg_count,
-        (uint32_t)millis(),
-        true
-    };
-}
-
-static bool capture_match_response(const ModbusFrame* f) {
-    if (!f || f->type != FRAME_RESPONSE) return false;
-    if (f->function_code != FC_READ_HOLDING_REGS && f->function_code != FC_READ_INPUT_REGS) return false;
-
-    const uint32_t now = millis();
-    int best = -1;
-    uint32_t best_ts = 0;
-    for (int i = 0; i < MAX_CAPTURE_PENDING_REQUESTS; i++) {
-        if (!s_capture_pending[i].valid) continue;
-        if ((now - s_capture_pending[i].timestamp_ms) > 10000U) {
-            s_capture_pending[i].valid = false;
-            continue;
-        }
-        if (s_capture_pending[i].slave_addr != f->slave_addr) continue;
-        if (s_capture_pending[i].function_code != f->function_code) continue;
-        if (s_capture_pending[i].timestamp_ms >= best_ts) {
-            best_ts = s_capture_pending[i].timestamp_ms;
-            best = i;
-        }
-    }
-    if (best < 0) return false;
-    s_capture_pending[best].valid = false;
-    return true;
-}
+// ============================================================
+// Raw frame capture + dump (for debug.raw_frame_dump setting)
+// ============================================================
 
 static bool should_capture_raw_frame(const ModbusFrame* f) {
     if (!f || !f->raw || f->raw_len == 0) return false;
@@ -516,26 +337,6 @@ static bool should_capture_raw_frame(const ModbusFrame* f) {
 
     if (s_raw_capture_profile == RAW_CAPTURE_UNKNOWN_H41) {
         return (f->type == FRAME_UNKNOWN && f->function_code == FC_HUAWEI_EXT);
-    }
-
-    // compare profile: include proprietary Huawei FC 0x41 frames
-    if (s_raw_capture_profile == RAW_CAPTURE_COMPARE_POWER &&
-        f->type == FRAME_UNKNOWN && f->function_code == FC_HUAWEI_EXT) {
-        return true;
-    }
-    // research profile: include all unknown-function frames (not only FC 0x41)
-    if (s_raw_capture_profile == RAW_CAPTURE_RESEARCH_INVERTER_PHASE &&
-        f->type == FRAME_UNKNOWN) {
-        return true;
-    }
-
-    // and include selected FC03/FC04 request-response pairs
-    if (request_matches_profile(f)) {
-        capture_store_request(f);
-        return true;
-    }
-    if (capture_match_response(f)) {
-        return true;
     }
 
     return false;
@@ -676,6 +477,12 @@ static bool h41_parse_header(const ModbusFrame* f,
     return true;
 }
 
+static float decode_f32_be(uint32_t raw) {
+    float out = 0.0f;
+    memcpy(&out, &raw, sizeof(out));
+    return out;
+}
+
 static void store_h41_request(const ModbusFrame* f, uint8_t sub_cmd, uint16_t item_count, uint32_t list_hash) {
     int oldest = 0;
     uint32_t oldest_ts = UINT32_MAX;
@@ -768,6 +575,10 @@ static bool decode_h41_entry(uint8_t slave_addr, uint16_t start_addr, uint8_t wo
             }
             case I32ABS: {
                 value = (float)abs((int32_t)read_be_u32(rp)) / rd->scale;
+                break;
+            }
+            case F32: {
+                value = decode_f32_be(read_be_u32(rp));
                 break;
             }
             case STRING: {
@@ -882,6 +693,7 @@ static void decode_response(const ModbusFrame* f, const PendingReq* req) {
             case U32:    value = (float)modbus_get_u32(f, offset) / rd->scale; break;
             case I32:    value = (float)modbus_get_i32(f, offset) / rd->scale; break;
             case I32ABS: value = (float)abs(modbus_get_i32(f, offset)) / rd->scale; break;
+            case F32:    value = decode_f32_be(modbus_get_u32(f, offset)); break;
             case STRING: continue;  // group detected above; value publish skipped for strings
         }
         s_cb(rd->name, value, rd->unit, f->slave_addr, g, source_id, rd->addr, rd->words);
@@ -904,6 +716,10 @@ typedef struct { uint16_t start; uint16_t count; const char* desc; } KnownBlock;
 static const KnownBlock KNOWN_BLOCKS[] = {
     // ── Confirmed by live VERBOSE logs (this dongle's actual scan cycle) ──────────
     { 32000,  1, "inverter_state1"   },   // 32000:       state_1 (GRP_INVERTER_STATUS)
+    { 2102, 24, "dtsu_direct_main"   },   // 2102-2125: direct meter V/I/frequency baseline window
+    { 2126, 10, "dtsu_direct_power"  },   // 2126-2135: total/phase active + total reactive
+    { 2136, 46, "dtsu_direct_ext"    },   // 2136-2181: extended direct meter power/energy window
+    { 2214, 10, "dtsu_direct_aux"    },   // 2214-2223: direct meter auxiliary/status window
     { 32016,  4, "pv_strings_02"     },   // 32016–32019: PV01+PV02 voltage & current
     { 32064, 24, "inverter_ac_24"    },   // 32064–32087: full AC output block (17 decoded)
     { 32106, 10, "inverter_energy10" },   // 32106–32115: accumulated/dc/hourly/daily yield
@@ -912,7 +728,7 @@ static const KnownBlock KNOWN_BLOCKS[] = {
 
     // ── Occasionally seen / alternative block sizes ───────────────────────────────
     { 37100, 39, "meter_full"        },   // 37100–37138: full meter block (some FW versions)
-    { 32064, 32, "inverter_ac_32"    },   // 32064–32095: with active_power_fast
+    { 32064, 32, "inverter_ac_32"    },   // 32064–32095: includes inverter_active_power_fast
     { 32064, 18, "inverter_ac_short" },   // 32064–32081: short variant
     { 32106, 14, "inverter_energy14" },   // 32106–32119: extended energy totals
     { 37760, 26, "battery_combined"  },   // 37760–37785: aggregated battery

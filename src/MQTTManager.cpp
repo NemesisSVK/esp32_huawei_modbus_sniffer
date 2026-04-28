@@ -24,7 +24,7 @@ void MQTTManager::setup(const String& server, int port,
     asyncTransport.setKeepAlive(60);   // ~90s offline detection in HA
     asyncTransport.setSocketTimeout(60);
 
-    UnifiedLogger::info("[MQTT] configured — broker=%s:%d client='%s'\n",
+    UnifiedLogger::info("[MQTT] configured - broker=%s:%d client='%s'\n",
                         server.c_str(), port, clientId.c_str());
 }
 
@@ -36,10 +36,10 @@ void MQTTManager::reconnect() {
 
     const unsigned long now = millis();
 
-    // Guard: if a connect attempt is already in flight, wait for the async result
+    // Guard: if a connect attempt is already in flight, wait for async result.
     if (connectionAttemptPending) {
         if ((now - connectAttemptStartedMs) < CONNECT_GUARD_MS) return;
-        connectionAttemptPending = false;  // timed out — allow retry
+        connectionAttemptPending = false;  // timed out, allow retry
     }
 
     // Throttle rapid retries
@@ -59,6 +59,10 @@ void MQTTManager::reconnect() {
                            /*willRetain*/true,
                            /*willMsg*/   "offline");
 
+    lockDiag();
+    diag.reconnect_attempts++;
+    unlockDiag();
+
     connectionAttemptPending = true;
     connectAttemptStartedMs  = now;
     lastReconnectAttemptMs   = now;
@@ -69,21 +73,37 @@ bool MQTTManager::isConnected() {
 }
 
 void MQTTManager::loop() {
-    asyncTransport.loop();          // event-driven — returns immediately
+    asyncTransport.loop();          // event-driven, returns immediately
     processTransportEvents();       // drain pending connect/disconnect events
     trackConnectionState(asyncTransport.isConnected());
 }
 
 bool MQTTManager::publish(const String& topic, const String& payload,
-                           bool retained, uint8_t qos) {
+                          bool retained, uint8_t qos) {
+    lockDiag();
+    diag.publish_attempts++;
+    unlockDiag();
+
     if (!asyncTransport.isConnected()) {
-        // Not an error at boot — caller already guards on mqtt_connected()
+        // Not an error at boot; caller usually guards on mqtt_connected().
+        lockDiag();
+        diag.publish_fail_not_connected++;
+        diag.last_publish_fail_ms = millis();
+        unlockDiag();
         return false;
     }
+
     const bool ok = asyncTransport.publish(topic, payload, retained, qos);
-    if (!ok) {
+    lockDiag();
+    if (ok) {
+        diag.publish_success++;
+        diag.last_publish_ok_ms = millis();
+    } else {
+        diag.publish_fail_transport++;
+        diag.last_publish_fail_ms = millis();
         UnifiedLogger::warning("[MQTT] publish failed: %s\n", topic.c_str());
     }
+    unlockDiag();
     return ok;
 }
 
@@ -97,14 +117,14 @@ unsigned long MQTTManager::getConnectionDuration() const {
 
 String MQTTManager::getStateReason() {
     if (asyncTransport.isConnected()) return "connected";
-    // Map AsyncMqttClientDisconnectReason codes to human-readable strings
+    // Map AsyncMqttClientDisconnectReason codes to human-readable strings.
     switch (asyncTransport.state()) {
-        case  0: return "idle";
-        case  1: return "unacceptable protocol version";
-        case  2: return "client id rejected";
-        case  3: return "server unavailable";
-        case  4: return "bad credentials";
-        case  5: return "not authorised";
+        case 0:   return "idle";
+        case 1:   return "unacceptable protocol version";
+        case 2:   return "client id rejected";
+        case 3:   return "server unavailable";
+        case 4:   return "bad credentials";
+        case 5:   return "not authorised";
         case 128: return "tcp disconnected";
         case 129: return "tls error";
         case 130: return "lost connection";
@@ -112,6 +132,12 @@ String MQTTManager::getStateReason() {
         case 132: return "not authorised (async)";
         default:  return "unknown (" + String(asyncTransport.state()) + ")";
     }
+}
+
+void MQTTManager::getDiagnostics(Diagnostics& out) const {
+    lockDiag();
+    out = diag;
+    unlockDiag();
 }
 
 // ============================================================
@@ -125,13 +151,25 @@ void MQTTManager::processTransportEvents() {
     if (ev.connected) {
         UnifiedLogger::info("[MQTT] transport event: connected\n");
         connectionAttemptPending = false;
+        lockDiag();
+        diag.connect_events++;
+        diag.last_connect_ms = millis();
+        unlockDiag();
+
         // Birth message
         if (lwt_topic.length() > 0) {
-            asyncTransport.publish(lwt_topic, "online", /*retained*/true, /*qos*/1);
+            publish(lwt_topic, "online", /*retained*/true, /*qos*/1);
         }
     }
+
     if (ev.disconnected) {
         connectionAttemptPending = false;
+        lockDiag();
+        diag.disconnect_events++;
+        diag.last_disconnect_ms = millis();
+        diag.last_disconnect_reason = ev.disconnectState;
+        unlockDiag();
+
         UnifiedLogger::warning("[MQTT] transport event: disconnected (reason=%d)\n",
                                ev.disconnectState);
     }
@@ -141,10 +179,22 @@ void MQTTManager::trackConnectionState(bool connected) {
     if (connected == lastConnectionState) return;
     if (connected) {
         connectionTime = millis();
-        UnifiedLogger::info("[MQTT] state → CONNECTED\n");
+        UnifiedLogger::info("[MQTT] state -> CONNECTED\n");
     } else {
         disconnectionTime = millis();
-        UnifiedLogger::warning("[MQTT] state → DISCONNECTED\n");
+        UnifiedLogger::warning("[MQTT] state -> DISCONNECTED\n");
     }
     lastConnectionState = connected;
+}
+
+void MQTTManager::lockDiag() const {
+#if defined(ARDUINO_ARCH_ESP32)
+    portENTER_CRITICAL(&diagLock);
+#endif
+}
+
+void MQTTManager::unlockDiag() const {
+#if defined(ARDUINO_ARCH_ESP32)
+    portEXIT_CRITICAL(&diagLock);
+#endif
 }

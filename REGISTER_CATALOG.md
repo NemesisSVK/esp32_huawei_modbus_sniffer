@@ -1,10 +1,10 @@
-# REGISTER_CATALOG.md
-Last-Updated-UTC: 2026-04-22 10:40
+﻿# REGISTER_CATALOG.md
+Last-Updated-UTC: 2026-04-24 10:01
 
 Dedicated cumulative register catalog for this project.
 - `decoded`: implemented in `src/huawei_decoder.cpp` (`KNOWN_REGS`) and published through group routing.
 - `observed_not_decoded`: seen in CRC-valid FC `0x41` traffic but not present in `KNOWN_REGS`.
-- Sources merged: sniffer logs (`!CLEAN!sniffer-log*`, `sniffer-log*`), canonical `_supporting-projects/huawei-solar-lib-3.0.0/src/huawei_solar/registers.py`, and Huawei PDF `SUN2000MA V200R024C00SPC106 Modbus Interface Definitions(V3.0).pdf`.
+- Sources merged: sniffer logs (`!CLEAN!sniffer-log*`, `sniffer-log*`), direct-channel captures (`captures/*`), canonical `_supporting-projects/huawei-solar-lib-3.0.0/src/huawei_solar/registers.py`, and Huawei PDF `SUN2000MA V200R024C00SPC106 Modbus Interface Definitions(V3.0).pdf`.
 - Home-page category model: `/api/values` uses `group = GROUP_INFO[].mqtt_subtopic` from `src/reg_groups.h`.
 
 ## 0) Home Page Grouping & Source Legend
@@ -21,7 +21,7 @@ Dedicated cumulative register catalog for this project.
 
 | enum group (`KNOWN_REGS`) | home group key (`/api/values`) | Home page label | decoded count |
 |---|---|---|---:|
-| `GRP_METER` | `meter` | Grid Meter | 27 |
+| `GRP_METER` | `meter` | Grid Meter | 68 |
 | `GRP_INVERTER_AC` | `inverter_ac` | Inverter AC Output | 20 |
 | `GRP_INVERTER_STATUS` | `inverter_status` | Inverter Status & Alarms | 13 |
 | `GRP_INVERTER_ENERGY` | `inverter_energy` | Inverter Energy Totals | 16 |
@@ -35,8 +35,56 @@ Dedicated cumulative register catalog for this project.
 | `GRP_SDONGLE` | `sdongle` | SDongle Aggregates | 5 |
 
 ## 1) Decoded Register Inventory (KNOWN_REGS)
-- Total decoded entries: 254
+- Total decoded entries: 295
 - Grouping note: table `group` column is enum-style (`GRP_*`); use section `0.2` for Home-page category key/label mapping.
+
+### 1.1 Direct DTSU666-H FC03 additions (non-Map0, direct meter channel)
+
+These were added from direct meter-bus captures and decode as IEEE754 float32 (`F32`), not SUN2000 Map0 integer-style registers.
+
+| addr | words | type | scale | unit | name | group | status |
+|---:|---:|---|---:|---|---|---|---|
+| 2102 | 2 | F32 | 1 | A | `grid_a_current` | `GRP_METER` | decoded (direct meter channel) |
+| 2104 | 2 | F32 | 1 | A | `grid_b_current` | `GRP_METER` | decoded (direct meter channel) |
+| 2106 | 2 | F32 | 1 | A | `grid_c_current` | `GRP_METER` | decoded (direct meter channel) |
+| 2108 | 2 | F32 | 1 | V | `grid_a_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2110 | 2 | F32 | 1 | V | `grid_b_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2112 | 2 | F32 | 1 | V | `grid_c_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2114 | 2 | F32 | 1 | V | `meter_equiv_phase_voltage` | `GRP_METER` | decoded (direct meter channel, inferred-equivalent phase voltage, finalized for this channel) |
+| 2116 | 2 | F32 | 1 | V | `grid_ab_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2118 | 2 | F32 | 1 | V | `grid_bc_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2120 | 2 | F32 | 1 | V | `grid_ca_voltage` | `GRP_METER` | decoded (direct meter channel) |
+| 2122 | 2 | F32 | 1 | V | `meter_equiv_line_voltage` | `GRP_METER` | decoded (direct meter channel, inferred-equivalent line voltage, `~sqrt(3)*2114`, finalized for this channel) |
+| 2124 | 2 | F32 | 1 | Hz | `meter_frequency` | `GRP_METER` | decoded (direct meter channel) |
+| 2126 | 2 | F32 | 1 | W | `meter_active_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2128 | 2 | F32 | 1 | W | `grid_a_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2130 | 2 | F32 | 1 | W | `grid_b_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2132 | 2 | F32 | 1 | W | `grid_c_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2134 | 2 | F32 | 1 | var | `meter_reactive_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2136 | 2 | F32 | 1 | var | `grid_a_reactive_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2138 | 2 | F32 | 1 | var | `grid_b_reactive_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2140 | 2 | F32 | 1 | var | `grid_c_reactive_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2142 | 2 | F32 | 1 | VA | `meter_apparent_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2144 | 2 | F32 | 1 | VA | `grid_a_apparent_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2146 | 2 | F32 | 1 | VA | `grid_b_apparent_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2148 | 2 | F32 | 1 | VA | `grid_c_apparent_power` | `GRP_METER` | decoded (direct meter channel) |
+| 2150 | 2 | F32 | 1 | - | `meter_power_factor` | `GRP_METER` | decoded (direct meter channel) |
+| 2152 | 2 | F32 | 1 | - | `grid_a_power_factor` | `GRP_METER` | decoded (direct meter channel) |
+| 2154 | 2 | F32 | 1 | - | `grid_b_power_factor` | `GRP_METER` | decoded (direct meter channel) |
+| 2156 | 2 | F32 | 1 | - | `grid_c_power_factor` | `GRP_METER` | decoded (direct meter channel) |
+| 2158 | 2 | F32 | 1 | kWh | `meter_net_active_energy_total` | `GRP_METER` | decoded (direct meter channel, inferred identity check: `2166-2174`, finalized for this channel) |
+| 2160 | 2 | F32 | 1 | kWh | `meter_net_active_energy_a` | `GRP_METER` | decoded (direct meter channel, inferred identity check: `2168-2176`, finalized for this channel) |
+| 2162 | 2 | F32 | 1 | kWh | `meter_net_active_energy_b` | `GRP_METER` | decoded (direct meter channel, inferred identity check: `2170-2178`, finalized for this channel) |
+| 2164 | 2 | F32 | 1 | kWh | `meter_net_active_energy_c` | `GRP_METER` | decoded (direct meter channel, inferred identity check: `2172-2180`, finalized for this channel) |
+| 2166 | 2 | F32 | 1 | kWh | `meter_imported_energy_total` | `GRP_METER` | decoded (direct meter channel, confirmed vs HA `consumption`) |
+| 2168 | 2 | F32 | 1 | kWh | `meter_imported_energy_a_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative import, finalized for this channel) |
+| 2170 | 2 | F32 | 1 | kWh | `meter_imported_energy_b_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative import, finalized for this channel) |
+| 2172 | 2 | F32 | 1 | kWh | `meter_imported_energy_c_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative import, finalized for this channel) |
+| 2174 | 2 | F32 | 1 | kWh | `meter_exported_energy_total` | `GRP_METER` | decoded (direct meter channel, confirmed vs HA `exported`) |
+| 2176 | 2 | F32 | 1 | kWh | `meter_exported_energy_a_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative export, finalized for this channel) |
+| 2178 | 2 | F32 | 1 | kWh | `meter_exported_energy_b_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative export, finalized for this channel) |
+| 2180 | 2 | F32 | 1 | kWh | `meter_exported_energy_c_total` | `GRP_METER` | decoded (direct meter channel, inferred phase-split cumulative export, finalized for this channel) |
+| 2222 | 2 | F32 | 1 | kvarh | `meter_reactive_energy_total` | `GRP_METER` | decoded (direct meter channel, confirmed from integrated reactive power correlation) |
 
 | addr | words | type | scale | unit | name | group | status |
 |---:|---:|---|---:|---|---|---|---|
@@ -128,9 +176,9 @@ Dedicated cumulative register catalog for this project.
 | 32074 | 2 | I32 | 1000 | A | `phase_b_current` | `GRP_INVERTER_AC` | decoded |
 | 32076 | 2 | I32 | 1000 | A | `phase_c_current` | `GRP_INVERTER_AC` | decoded |
 | 32078 | 2 | I32 | 1 | W | `peak_active_power` | `GRP_INVERTER_AC` | decoded |
-| 32080 | 2 | I32 | 1 | W | `active_power` | `GRP_INVERTER_AC` | decoded |
-| 32082 | 2 | I32 | 1 | var | `reactive_power` | `GRP_INVERTER_AC` | decoded |
-| 32084 | 1 | I16 | 1000 | - | `power_factor` | `GRP_INVERTER_AC` | decoded |
+| 32080 | 2 | I32 | 1 | W | `inverter_active_power` | `GRP_INVERTER_AC` | decoded |
+| 32082 | 2 | I32 | 1 | var | `inverter_reactive_power` | `GRP_INVERTER_AC` | decoded |
+| 32084 | 1 | I16 | 1000 | - | `inverter_power_factor` | `GRP_INVERTER_AC` | decoded |
 | 32085 | 1 | U16 | 100 | Hz | `grid_frequency` | `GRP_INVERTER_AC` | decoded |
 | 32086 | 1 | U16 | 100 | % | `efficiency` | `GRP_INVERTER_AC` | decoded |
 | 32087 | 1 | I16 | 10 | degC | `internal_temperature` | `GRP_INVERTER_AC` | decoded |
@@ -139,7 +187,7 @@ Dedicated cumulative register catalog for this project.
 | 32090 | 1 | U16 | 1 | - | `fault_code` | `GRP_INVERTER_STATUS` | decoded |
 | 32091 | 2 | U32 | 1 | s | `startup_time` | `GRP_INVERTER_STATUS` | decoded |
 | 32093 | 2 | U32 | 1 | s | `shutdown_time` | `GRP_INVERTER_STATUS` | decoded |
-| 32095 | 2 | I32 | 1 | W | `active_power_fast` | `GRP_INVERTER_AC` | decoded |
+| 32095 | 2 | I32 | 1 | W | `inverter_active_power_fast` | `GRP_INVERTER_AC` | decoded |
 | 32106 | 2 | U32 | 100 | kWh | `accumulated_yield` | `GRP_INVERTER_ENERGY` | decoded |
 | 32108 | 2 | U32 | 100 | kWh | `total_dc_input_power` | `GRP_INVERTER_ENERGY` | decoded |
 | 32112 | 2 | U32 | 100 | kWh | `hourly_yield` | `GRP_INVERTER_ENERGY` | decoded |
@@ -387,4 +435,5 @@ Battery constraint:
 - Addresses below `30000` (`10000`/`10102`/`16300`/etc.) are not in the published SUN2000 Modbus map sections in the V3.0 PDF and are treated as proprietary/internal FC `0x41` payload offsets; decoded `16300/16305/16307/16309/16312` are confirmed and exposed as `*_fast` meter-power mirrors.
 - Some addresses are documented in the V3.0 PDF but absent from canonical `registers.py`; those are currently tagged `documented_v3_pdf_not_decoded`.
 - This file is intended as the single working inventory for register reverse-engineering and decode backlog prioritization.
+
 

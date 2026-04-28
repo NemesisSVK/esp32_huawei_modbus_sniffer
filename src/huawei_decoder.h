@@ -1,6 +1,7 @@
 #pragma once
 #include "modbus_rtu.h"
 #include "reg_groups.h"
+#include <WString.h>
 #include <stdint.h>
 
 // ============================================================
@@ -39,7 +40,7 @@ void huawei_decoder_set_group_enabled(RegGroup g, bool enabled);
 /** Enable or disable raw-frame capture (serial dump and/or raw stream export). */
 void huawei_decoder_set_raw_dump(bool enabled);
 
-/** Set raw capture profile: unknown_h41 | compare_power | research_inverter_phase. */
+/** Set raw capture profile: unknown_h41 | all_frames. */
 void huawei_decoder_set_raw_capture_profile(const char* profile);
 
 /** Returns true if at least one register from this group has been decoded. */
@@ -47,3 +48,15 @@ bool huawei_decoder_group_seen(RegGroup g);
 
 /** Returns true if the group is currently enabled for publishing. */
 bool huawei_decoder_group_enabled(RegGroup g);
+
+/** Returns true if at least one decoded register is defined for this group in KNOWN_REGS. */
+bool huawei_decoder_group_has_registers(RegGroup g);
+
+/** Returns true when name matches any known decoded register in KNOWN_REGS. */
+bool huawei_decoder_is_known_register_name(const char* name);
+
+/** Returns JSON array of unique known decoded registers with group metadata. */
+String huawei_decoder_get_known_register_catalog_json();
+
+/** Looks up the natural KNOWN_REGS group for a register name. */
+bool huawei_decoder_get_register_group(const char* name, RegGroup* out_group);

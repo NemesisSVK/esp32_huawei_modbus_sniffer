@@ -206,14 +206,12 @@ All config.json fields are editable in the web UI. Changes take effect on **Save
 
 | Card | Fields |
 |---|---|
-| **WiFi** | SSID, password |
-| **Network** | Hostname, mDNS enable |
-| **MQTT** | Server, port, credentials, client ID, base topic, republish interval, format |
-| **Device Info** | Name, manufacturer, model |
-| **RS-485** | Baud rate, meter slave address |
-| **GPIO Pins** | RX/TX/DE-RE GPIO numbers |
-| **Security** | HTTP Basic Auth toggle, username/password, IP whitelist |
-| **Config Backup** | Export config.json · Import config.json (applies + reboots) |
+| **Network** | WiFi (SSID/password), hostname/mDNS, HTTP auth, IP whitelist/ranges |
+| **MQTT** | Broker/port/credentials, client ID, base topic, payload format, device info (name/manufacturer/model) |
+| **Publish Configuration** | Tier intervals, per-group tier+enable controls, manual priority group selectors |
+| **RS485 / Modbus** | Baud rate, meter slave address, RS485 RX/TX/DE-RE pins |
+| **Debug** | Serial logging, refresh metrics, raw capture profile, raw stream exporter settings |
+| **Config Backup** | Export config.json (readable JSON) |
 
 ---
 
@@ -226,7 +224,7 @@ All endpoints respect the same Basic Auth + IP whitelist as the web pages.
 | `GET` | `/api/status` | JSON: IP, hostname, uptime, heap, RSSI, MQTT state + reason, frame count, group list |
 | `GET` | `/api/config` | JSON: current settings (passwords omitted) |
 | `POST` | `/api/config` | JSON body: update settings + reboot |
-| `GET` | `/api/config/export` | Download raw `config.json` from LittleFS |
+| `GET` | `/api/config/export` | Download beautifier-style pretty `config.json` (stable order, readable formatting) |
 | `GET` | `/api/values` | JSON: last decoded value for every register seen (`{group/name: {v, u, slave, group}}`) |
 | `GET` | `/api/ota_status` | JSON: OTA armed state, remaining window, progress, last error |
 | `POST` | `/api/ota_arm` | Arm the OTA flash window (requires `ota.json` on LittleFS) |
@@ -257,7 +255,7 @@ All endpoints respect the same Basic Auth + IP whitelist as the web pages.
 ```json
 {
   "meter/meter_active_power": {"v": 1234.5, "u": "W", "slave": 1, "group": "meter"},
-  "inverter/active_power":    {"v": 4800.0, "u": "W", "slave": 0, "group": "inverter"}
+  "inverter/inverter_active_power": {"v": 4800.0, "u": "W", "slave": 0, "group": "inverter"}
 }
 ```
 
@@ -325,17 +323,20 @@ On first register hit from a group → group **auto-enabled** → web UI card ap
 ### JSON mode (default)
 
 ```
-huawei_solar/meter     → {"meter_active_power":1250.0,"grid_a_voltage":230.1,...}
-huawei_solar/inverter  → {"active_power":4800.0,"daily_yield":12.34,...}
-huawei_solar/battery   → {"battery_soc":82.0,"battery_power":-1200.0,...}
-huawei_solar/status    → "online"   (LWT: "offline", retained)
+huawei_solar/meter     -> {"meter_active_power":1250.0,"grid_a_voltage":230.1,...}
+huawei_solar/inverter  -> {"inverter_active_power":4800.0,"daily_yield":12.34,...}
+huawei_solar/battery   -> {"battery_soc":82.0,"battery_power":-1200.0,...}
+huawei_solar/diag/cpu_temp              -> {"value":42.3}
+huawei_solar/diag/memory_free_heap      -> {"value":245760}
+huawei_solar/diag/littlefs_free_percent -> {"value":63.4}
+huawei_solar/status    -> "online"   (LWT: "offline", retained)
 ```
 
 ### Individual topics mode
 
 ```
 huawei_solar/meter/meter_active_power  → 1250.00
-huawei_solar/inverter/active_power     → 4800.00
+huawei_solar/inverter/inverter_active_power     → 4800.00
 huawei_solar/battery/battery_soc       → 82.00
 ```
 
@@ -346,7 +347,7 @@ huawei_solar/battery/battery_soc       → 82.00
 | `meter_active_power` | Exporting to grid | Importing from grid |
 | `battery_power` | Charging | Discharging |
 | `sdongle_grid_power` | Importing from grid | Exporting to grid |
-| `active_power` (inverter) | Always positive | — |
+| `inverter_active_power` | Always positive | — |
 
 ---
 

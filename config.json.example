@@ -97,6 +97,18 @@
       "battery_packs":   true,
       "battery_cfg":     true,
       "sdongle":         true
+    },
+    "manual_group": {
+      "_comment": "Optional custom bucket: listed registers are routed to dedicated topic huawei_solar/priority",
+      "enabled": false,
+      "tier": "high",
+      "registers": [
+        "meter_active_power_fast",
+        "grid_a_power_fast",
+        "grid_b_power_fast",
+        "grid_c_power_fast",
+        "inverter_active_power_fast"
+      ]
     }
   }
 }
