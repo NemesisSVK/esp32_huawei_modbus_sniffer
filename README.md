@@ -6,12 +6,10 @@ Primary tested deployment is on the SUN2000 <-> SDongle uplink bus. Direct SUN20
 
 ## Tested Hardware Profile
 
-- Inverter: Huawei SUN2000 family (exact model variant not yet recorded in repo metadata)
-- Smart Dongle: Huawei SDongle (exact hardware variant not yet recorded in repo metadata)
+- Inverter: Huawei SUN2000-8K-MAP0, firmware `V200R024C00SPC106`
+- Smart Dongle: Huawei SDongleA-05, firmware `V200R022C10SPC110`
 - Power meter: Huawei DTSU666-H (direct meter-bus FC03 float map tested)
 - Sniffer device: ESP32-S3 R16N8 + MAX485 auto-direction RS-485 TTL board
-
-If you share your exact SUN2000 and SDongle model strings, add them here so compatibility expectations are explicit.
 
 ## Important Topology Notes
 
