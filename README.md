@@ -76,10 +76,12 @@ Group enable persistence is stored in `config.json` under `publish.group_enabled
 
 ## Web UI
 
-- Dashboard: `/`
-- Settings: `/settings`
-- Monitoring: `/monitoring`
-- Priority monitor: `/priority`
+| Page | Path | What it does |
+|---|---|---|
+| Dashboard | `/` | Main runtime overview with decoded groups, MQTT status, and quick health info. |
+| Settings | `/settings` | Edit and save runtime configuration (network, MQTT, RS-485, publish behavior, debug). |
+| Monitoring | `/monitoring` | Detailed diagnostics (connectivity, MQTT counters, memory, sniffer/availability telemetry). |
+| Priority Monitor | `/priority` | Fast view of values routed through the manual priority publish group. |
 
 ## API Reference
 
