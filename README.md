@@ -4,6 +4,15 @@ ESP32-S3 firmware that passively sniffs Huawei Modbus RTU traffic and publishes 
 
 Primary tested deployment is on the SUN2000 <-> SDongle uplink bus. Direct SUN2000 <-> DTSU666 meter-bus decoding is also supported and tested.
 
+## Tested Hardware Profile
+
+- Inverter: Huawei SUN2000 family (exact model variant not yet recorded in repo metadata)
+- Smart Dongle: Huawei SDongle (exact hardware variant not yet recorded in repo metadata)
+- Power meter: Huawei DTSU666-H (direct meter-bus FC03 float map tested)
+- Sniffer device: ESP32-S3 R16N8 + MAX485 auto-direction RS-485 TTL board
+
+If you share your exact SUN2000 and SDongle model strings, add them here so compatibility expectations are explicit.
+
 ## Important Topology Notes
 
 - Primary tested wiring in this project: tap the SUN2000 <-> SDongle RS-485 line.
@@ -107,6 +116,7 @@ Extended reverse-engineering notes/backlog:
 
 ## MQTT Notes
 
+- Primary integration target is Home Assistant via MQTT (entity-oriented telemetry flow).
 - JSON and individual-topic modes are both supported.
 - Availability/LWT and diagnostics are managed by async MQTT stack.
 
