@@ -1,0 +1,7 @@
+Required Notice: Copyright (c) 2026 NemesisSVK and contributors
+
+License scope clarification:
+- The maintainers intend the PolyForm Noncommercial 1.0.0 license in `LICENSE`
+  to apply to this repository's codebase history (all commits and tags in this
+  repository), unless a file or commit explicitly states a different license.
+- If you received source from this repository, treat it as governed by `LICENSE`.

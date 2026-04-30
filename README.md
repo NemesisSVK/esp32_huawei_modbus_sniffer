@@ -193,3 +193,8 @@ esp32_modbus_sniffer/
 - CRC fails: check baud mismatch.
 - No useful uplink data: confirm SDongle is present and polling.
 - MQTT issues: check broker reachability and auth.
+
+## License
+
+- License text: [LICENSE](LICENSE) (PolyForm Noncommercial 1.0.0)
+- Required notice and scope clarification: [NOTICE](NOTICE)
