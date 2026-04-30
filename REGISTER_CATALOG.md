@@ -1,11 +1,14 @@
 ﻿# REGISTER_CATALOG.md
-Last-Updated-UTC: 2026-04-24 10:01
+Last-Updated-UTC: 2026-04-30 19:45
 
 Dedicated cumulative register catalog for this project.
 - `decoded`: implemented in `src/huawei_decoder.cpp` (`KNOWN_REGS`) and published through group routing.
 - `observed_not_decoded`: seen in CRC-valid FC `0x41` traffic but not present in `KNOWN_REGS`.
 - Sources merged: sniffer logs (`!CLEAN!sniffer-log*`, `sniffer-log*`), direct-channel captures (`captures/*`), canonical `_supporting-projects/huawei-solar-lib-3.0.0/src/huawei_solar/registers.py`, and Huawei PDF `SUN2000MA V200R024C00SPC106 Modbus Interface Definitions(V3.0).pdf`.
 - Home-page category model: `/api/values` uses `group = GROUP_INFO[].mqtt_subtopic` from `src/reg_groups.h`.
+- Authoritative current per-bus register lists are generated from `src/huawei_decoder.cpp` and published in:
+  - `REGISTER_LIST_MODBUS_SDONGLE_UPLINK.md`
+  - `REGISTER_LIST_MODBUS_DIRECT_METER.md`
 
 ## 0) Home Page Grouping & Source Legend
 
@@ -34,8 +37,9 @@ Dedicated cumulative register catalog for this project.
 | `GRP_BATTERY_SETTINGS` | `battery_cfg` | Battery Settings | 20 |
 | `GRP_SDONGLE` | `sdongle` | SDongle Aggregates | 5 |
 
-## 1) Decoded Register Inventory (KNOWN_REGS)
-- Total decoded entries: 295
+## 1) Decoded Register Inventory (KNOWN_REGS, historical detail)
+- This section is retained as extended historical/research context.
+- For exact current register coverage by Modbus bus, use the two generated `REGISTER_LIST_MODBUS_*` files listed above.
 - Grouping note: table `group` column is enum-style (`GRP_*`); use section `0.2` for Home-page category key/label mapping.
 
 ### 1.1 Direct DTSU666-H FC03 additions (non-Map0, direct meter channel)

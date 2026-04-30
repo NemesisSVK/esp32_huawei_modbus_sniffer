@@ -1,0 +1,144 @@
+# Register List by Bus (Auto-generated from src/huawei_decoder.cpp)
+
+- Generated-UTC: 2026-04-30 19:40
+- Source: `src/huawei_decoder.cpp` `KNOWN_REGS`
+- Classification rule:
+  - `direct_meter`: F32 registers in address range 2102..2222 (DTSU666 direct FC03 map).
+  - `sdongle_uplink`: all other decoded registers (SUN2000 <-> SDongle/inverter-side traffic).
+
+## SUN2000 <-> SDongle/Uplink Bus (primary tested setup)
+
+- Total decoded registers: 129
+- Notes: Includes Map0-style FC03/FC04 and observed FC0x41 fast/proprietary paths visible on the inverter-side uplink.
+
+| addr | words | type | scale | unit | name | group |
+|---:|---:|---|---:|---|---|---|
+| 16300 | 2 | I32 | 1 | W | `meter_active_power_fast` | `GRP_METER` |
+| 16305 | 1 | I16 | 1 | W | `grid_a_power_fast` | `GRP_METER` |
+| 16307 | 1 | I16 | 1 | W | `grid_b_power_fast` | `GRP_METER` |
+| 16309 | 1 | I16 | 1 | W | `grid_c_power_fast` | `GRP_METER` |
+| 16312 | 1 | I16 | 1 | var | `meter_reactive_power_fast` | `GRP_METER` |
+| 32000 | 1 | U16 | 1 | - | `state_1` | `GRP_INVERTER_STATUS` |
+| 32002 | 1 | U16 | 1 | - | `state_2` | `GRP_INVERTER_STATUS` |
+| 32003 | 2 | U32 | 1 | - | `state_3` | `GRP_INVERTER_STATUS` |
+| 32016 | 1 | I16 | 10 | V | `pv01_voltage` | `GRP_PV_STRINGS` |
+| 32017 | 1 | I16 | 100 | A | `pv01_current` | `GRP_PV_STRINGS` |
+| 32018 | 1 | I16 | 10 | V | `pv02_voltage` | `GRP_PV_STRINGS` |
+| 32019 | 1 | I16 | 100 | A | `pv02_current` | `GRP_PV_STRINGS` |
+| 32020 | 1 | I16 | 10 | V | `pv03_voltage` | `GRP_PV_STRINGS` |
+| 32021 | 1 | I16 | 100 | A | `pv03_current` | `GRP_PV_STRINGS` |
+| 32022 | 1 | I16 | 10 | V | `pv04_voltage` | `GRP_PV_STRINGS` |
+| 32023 | 1 | I16 | 100 | A | `pv04_current` | `GRP_PV_STRINGS` |
+| 32024 | 1 | I16 | 10 | V | `pv05_voltage` | `GRP_PV_STRINGS` |
+| 32025 | 1 | I16 | 100 | A | `pv05_current` | `GRP_PV_STRINGS` |
+| 32026 | 1 | I16 | 10 | V | `pv06_voltage` | `GRP_PV_STRINGS` |
+| 32027 | 1 | I16 | 100 | A | `pv06_current` | `GRP_PV_STRINGS` |
+| 32028 | 1 | I16 | 10 | V | `pv07_voltage` | `GRP_PV_STRINGS` |
+| 32029 | 1 | I16 | 100 | A | `pv07_current` | `GRP_PV_STRINGS` |
+| 32030 | 1 | I16 | 10 | V | `pv08_voltage` | `GRP_PV_STRINGS` |
+| 32031 | 1 | I16 | 100 | A | `pv08_current` | `GRP_PV_STRINGS` |
+| 32032 | 1 | I16 | 10 | V | `pv09_voltage` | `GRP_PV_STRINGS` |
+| 32033 | 1 | I16 | 100 | A | `pv09_current` | `GRP_PV_STRINGS` |
+| 32034 | 1 | I16 | 10 | V | `pv10_voltage` | `GRP_PV_STRINGS` |
+| 32035 | 1 | I16 | 100 | A | `pv10_current` | `GRP_PV_STRINGS` |
+| 32036 | 1 | I16 | 10 | V | `pv11_voltage` | `GRP_PV_STRINGS` |
+| 32037 | 1 | I16 | 100 | A | `pv11_current` | `GRP_PV_STRINGS` |
+| 32038 | 1 | I16 | 10 | V | `pv12_voltage` | `GRP_PV_STRINGS` |
+| 32039 | 1 | I16 | 100 | A | `pv12_current` | `GRP_PV_STRINGS` |
+| 32040 | 1 | I16 | 10 | V | `pv13_voltage` | `GRP_PV_STRINGS` |
+| 32041 | 1 | I16 | 100 | A | `pv13_current` | `GRP_PV_STRINGS` |
+| 32042 | 1 | I16 | 10 | V | `pv14_voltage` | `GRP_PV_STRINGS` |
+| 32043 | 1 | I16 | 100 | A | `pv14_current` | `GRP_PV_STRINGS` |
+| 32044 | 1 | I16 | 10 | V | `pv15_voltage` | `GRP_PV_STRINGS` |
+| 32045 | 1 | I16 | 100 | A | `pv15_current` | `GRP_PV_STRINGS` |
+| 32046 | 1 | I16 | 10 | V | `pv16_voltage` | `GRP_PV_STRINGS` |
+| 32047 | 1 | I16 | 100 | A | `pv16_current` | `GRP_PV_STRINGS` |
+| 32048 | 1 | I16 | 10 | V | `pv17_voltage` | `GRP_PV_STRINGS` |
+| 32049 | 1 | I16 | 100 | A | `pv17_current` | `GRP_PV_STRINGS` |
+| 32050 | 1 | I16 | 10 | V | `pv18_voltage` | `GRP_PV_STRINGS` |
+| 32051 | 1 | I16 | 100 | A | `pv18_current` | `GRP_PV_STRINGS` |
+| 32052 | 1 | I16 | 10 | V | `pv19_voltage` | `GRP_PV_STRINGS` |
+| 32053 | 1 | I16 | 100 | A | `pv19_current` | `GRP_PV_STRINGS` |
+| 32054 | 1 | I16 | 10 | V | `pv20_voltage` | `GRP_PV_STRINGS` |
+| 32055 | 1 | I16 | 100 | A | `pv20_current` | `GRP_PV_STRINGS` |
+| 32056 | 1 | I16 | 10 | V | `pv21_voltage` | `GRP_PV_STRINGS` |
+| 32057 | 1 | I16 | 100 | A | `pv21_current` | `GRP_PV_STRINGS` |
+| 32058 | 1 | I16 | 10 | V | `pv22_voltage` | `GRP_PV_STRINGS` |
+| 32059 | 1 | I16 | 100 | A | `pv22_current` | `GRP_PV_STRINGS` |
+| 32060 | 1 | I16 | 10 | V | `pv23_voltage` | `GRP_PV_STRINGS` |
+| 32061 | 1 | I16 | 100 | A | `pv23_current` | `GRP_PV_STRINGS` |
+| 32062 | 1 | I16 | 10 | V | `pv24_voltage` | `GRP_PV_STRINGS` |
+| 32063 | 1 | I16 | 100 | A | `pv24_current` | `GRP_PV_STRINGS` |
+| 32064 | 2 | I32 | 1 | W | `dc_input_power` | `GRP_INVERTER_AC` |
+| 32066 | 1 | U16 | 10 | V | `line_voltage_ab` | `GRP_INVERTER_AC` |
+| 32067 | 1 | U16 | 10 | V | `line_voltage_bc` | `GRP_INVERTER_AC` |
+| 32068 | 1 | U16 | 10 | V | `line_voltage_ca` | `GRP_INVERTER_AC` |
+| 32069 | 1 | U16 | 10 | V | `phase_a_voltage` | `GRP_INVERTER_AC` |
+| 32070 | 1 | U16 | 10 | V | `phase_b_voltage` | `GRP_INVERTER_AC` |
+| 32071 | 1 | U16 | 10 | V | `phase_c_voltage` | `GRP_INVERTER_AC` |
+| 32072 | 2 | I32 | 1000 | A | `phase_a_current` | `GRP_INVERTER_AC` |
+| 32074 | 2 | I32 | 1000 | A | `phase_b_current` | `GRP_INVERTER_AC` |
+| 32076 | 2 | I32 | 1000 | A | `phase_c_current` | `GRP_INVERTER_AC` |
+| 32078 | 2 | I32 | 1 | W | `peak_active_power` | `GRP_INVERTER_AC` |
+| 32080 | 2 | I32 | 1 | W | `inverter_active_power` | `GRP_INVERTER_AC` |
+| 32082 | 2 | I32 | 1 | var | `inverter_reactive_power` | `GRP_INVERTER_AC` |
+| 32084 | 1 | I16 | 1000 | - | `inverter_power_factor` | `GRP_INVERTER_AC` |
+| 32085 | 1 | U16 | 100 | Hz | `grid_frequency` | `GRP_INVERTER_AC` |
+| 32086 | 1 | U16 | 100 | % | `efficiency` | `GRP_INVERTER_AC` |
+| 32087 | 1 | I16 | 10 | degC | `internal_temperature` | `GRP_INVERTER_AC` |
+| 32088 | 1 | U16 | 1000 | MOhm | `insulation_resistance` | `GRP_INVERTER_AC` |
+| 32089 | 1 | U16 | 1 | - | `device_status` | `GRP_INVERTER_STATUS` |
+| 32090 | 1 | U16 | 1 | - | `fault_code` | `GRP_INVERTER_STATUS` |
+| 32095 | 2 | I32 | 1 | W | `inverter_active_power_fast` | `GRP_INVERTER_AC` |
+| 32106 | 2 | U32 | 100 | kWh | `accumulated_yield` | `GRP_INVERTER_ENERGY` |
+| 32108 | 2 | U32 | 100 | kWh | `total_dc_input_power` | `GRP_INVERTER_ENERGY` |
+| 32112 | 2 | U32 | 100 | kWh | `hourly_yield` | `GRP_INVERTER_ENERGY` |
+| 32114 | 2 | U32 | 100 | kWh | `daily_yield` | `GRP_INVERTER_ENERGY` |
+| 32116 | 2 | U32 | 100 | kWh | `monthly_yield` | `GRP_INVERTER_ENERGY` |
+| 32118 | 2 | U32 | 100 | kWh | `yearly_yield` | `GRP_INVERTER_ENERGY` |
+| 32212 | 2 | U32 | 100 | kWh | `mppt1_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32214 | 2 | U32 | 100 | kWh | `mppt2_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32216 | 2 | U32 | 100 | kWh | `mppt3_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32218 | 2 | U32 | 100 | kWh | `mppt4_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32220 | 2 | U32 | 100 | kWh | `mppt5_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32222 | 2 | U32 | 100 | kWh | `mppt6_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32224 | 2 | U32 | 100 | kWh | `mppt7_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32226 | 2 | U32 | 100 | kWh | `mppt8_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32228 | 2 | U32 | 100 | kWh | `mppt9_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 32230 | 2 | U32 | 100 | kWh | `mppt10_dc_yield` | `GRP_INVERTER_ENERGY` |
+| 37100 | 1 | U16 | 1 | - | `status` | `GRP_METER` |
+| 37101 | 2 | I32 | 10 | V | `grid_a_voltage` | `GRP_METER` |
+| 37103 | 2 | I32 | 10 | V | `grid_b_voltage` | `GRP_METER` |
+| 37105 | 2 | I32 | 10 | V | `grid_c_voltage` | `GRP_METER` |
+| 37107 | 2 | I32 | 100 | A | `grid_a_current` | `GRP_METER` |
+| 37109 | 2 | I32 | 100 | A | `grid_b_current` | `GRP_METER` |
+| 37111 | 2 | I32 | 100 | A | `grid_c_current` | `GRP_METER` |
+| 37113 | 2 | I32 | 1 | W | `meter_active_power` | `GRP_METER` |
+| 37115 | 2 | I32 | 1 | var | `meter_reactive_power` | `GRP_METER` |
+| 37117 | 1 | I16 | 1000 | - | `meter_power_factor` | `GRP_METER` |
+| 37118 | 1 | I16 | 100 | Hz | `meter_frequency` | `GRP_METER` |
+| 37119 | 2 | I32ABS | 100 | kWh | `grid_exported_energy` | `GRP_METER` |
+| 37121 | 2 | I32 | 100 | kWh | `grid_imported_energy` | `GRP_METER` |
+| 37123 | 2 | I32 | 100 | kvarh | `grid_reactive_energy` | `GRP_METER` |
+| 37125 | 1 | U16 | 1 | - | `type` | `GRP_METER` |
+| 37126 | 2 | I32 | 10 | V | `grid_ab_voltage` | `GRP_METER` |
+| 37128 | 2 | I32 | 10 | V | `grid_bc_voltage` | `GRP_METER` |
+| 37130 | 2 | I32 | 10 | V | `grid_ca_voltage` | `GRP_METER` |
+| 37132 | 2 | I32 | 1 | W | `grid_a_power` | `GRP_METER` |
+| 37134 | 2 | I32 | 1 | W | `grid_b_power` | `GRP_METER` |
+| 37136 | 2 | I32 | 1 | W | `grid_c_power` | `GRP_METER` |
+| 37138 | 1 | U16 | 1 | - | `type_validation` | `GRP_METER` |
+| 37758 | 2 | U32 | 1 | Wh | `battery_rated_capacity` | `GRP_BATTERY` |
+| 37760 | 1 | U16 | 10 | % | `battery_soc` | `GRP_BATTERY` |
+| 37762 | 1 | U16 | 1 | - | `battery_status` | `GRP_BATTERY` |
+| 37763 | 1 | U16 | 10 | V | `battery_bus_voltage` | `GRP_BATTERY` |
+| 37764 | 1 | I16 | 10 | A | `battery_bus_current` | `GRP_BATTERY` |
+| 37765 | 2 | I32 | 1 | W | `battery_power` | `GRP_BATTERY` |
+| 37780 | 2 | U32 | 100 | kWh | `battery_total_charge` | `GRP_BATTERY` |
+| 37782 | 2 | U32 | 100 | kWh | `battery_total_discharge` | `GRP_BATTERY` |
+| 37784 | 2 | U32 | 100 | kWh | `battery_daily_charge` | `GRP_BATTERY` |
+| 37786 | 2 | U32 | 100 | kWh | `battery_daily_discharge` | `GRP_BATTERY` |
+| 37926 | 1 | U16 | 1 | - | `battery_soh_calib_status` | `GRP_BATTERY` |
+| 37927 | 1 | U16 | 1 | - | `battery_soh_calib_soc_low` | `GRP_BATTERY` |
+| 42045 | 1 | U16 | 1 | - | `inverter_off_grid_mode` | `GRP_INVERTER_STATUS` |
+| 42056 | 2 | U32 | 1 | W | `mppt_predicted_power` | `GRP_INVERTER_AC` |
