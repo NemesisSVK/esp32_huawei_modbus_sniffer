@@ -82,6 +82,17 @@ Group enable persistence is stored in `config.json` under `publish.group_enabled
 | Settings | `/settings` | Edit and save runtime configuration (network, MQTT, RS-485, publish behavior, debug). |
 | Monitoring | `/monitoring` | Detailed diagnostics (connectivity, MQTT counters, memory, sniffer/availability telemetry). |
 | Priority Monitor | `/priority` | Fast view of values routed through the manual priority publish group. |
+| Live Modbus | `/live` | Live register-state page (known + unknown activity) fed by `/api/live_values`. |
+| Logs | `/logs` | Browser log viewer with start/stop capture controls for runtime debugging. |
+| OTA | `/ota` | OTA control page: arm OTA window, view OTA config/status, and copy upload command hints. |
+
+### Page behavior notes
+
+- `Dashboard` refreshes frequently for at-a-glance health and grouped values.
+- `Monitoring` is lower-rate but deeper, including raw stream queue/sent/dropped counters.
+- `Logs` is session-oriented: open page, start capture, inspect issues, then stop capture.
+- `Priority Monitor` only shows values explicitly routed to manual priority group in Settings.
+- `Live Modbus` is useful when reverse-engineering: it shows what is currently moving on the bus.
 
 ## API Reference
 
@@ -102,6 +113,40 @@ All endpoints follow the same auth/whitelist policy.
 - `POST /api/logs/start`
 - `POST /api/logs/stop`
 - `POST /api/reboot`
+
+## OTA Workflow (How it works)
+
+1. Configure OTA credentials/window in `ota.json` (on LittleFS).
+2. Open `/ota` and click arm (or call `POST /api/ota_arm`).
+3. While window is active, upload with the OTA environment (`esp32-s3-n16r8v-ota`).
+4. Track live state on `/ota` (backed by `GET /api/ota_status`).
+
+Design intent: OTA is explicitly armed for a limited window, not left permanently open.
+
+## Raw Stream Collector
+
+Raw stream exports binary frame records (`RFS1`) from device to a TCP collector.
+
+Typical flow:
+
+1. Start collector on your PC:
+
+```bash
+python scripts/raw_stream_collector.py --host 0.0.0.0 --port 9900 --out raw-stream.bin --index raw-stream.ndjson
+```
+
+2. In `/settings` set `raw_stream` options:
+   - `enabled=true`
+   - `host=<collector-ip>`
+   - `port=9900` (or your chosen port)
+   - adjust `queue_kb`, `reconnect_ms`, `connect_timeout_ms`, `serial_mirror` as needed
+
+3. Watch health in `/monitoring`:
+   - connected/disconnected state
+   - queued/capacity
+   - sent/dropped/reconnect counters
+
+Use this when you need longer captures for protocol analysis without relying only on serial logs.
 
 ## Register Coverage by Bus
 
