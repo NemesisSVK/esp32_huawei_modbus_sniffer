@@ -90,6 +90,14 @@ struct Settings {
             std::vector<String> registers;
         } manual_group;
     } publish;
+
+    struct HomeConsumption {
+        bool   enabled = false;
+        String selector_a = "h41_33:inverter_active_power_fast";
+        String selector_b = "h41_33:meter_active_power_fast";
+        int    max_skew_ms = 1000;
+        String output_name = "home_consumption_power";
+    } home_consumption;
 };
 
 // ============================================================

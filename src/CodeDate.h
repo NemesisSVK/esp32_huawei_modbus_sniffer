@@ -5,6 +5,11 @@
 // Format: YYYYMMDD-HHMM (24 hour, UTC)
 //
 // Change log (newest first):
+// - 20260520-2037 UTC: Move home-consumption derivation to priority flush-time so `home_consumption_power` is computed from the same buffered A/B values serialized in the published MQTT packet.
+// - 20260520-2020 UTC: Remove separate home-consumption MQTT availability path and bind discovery availability to the shared priority-manual group topic so derived metric follows the same MQTT availability model as other priority values.
+// - 20260520-2010 UTC: Ensure home-consumption calculation uses only source-selector values that are actually routed for publish in the priority stream, and enforce config-time selector presence in manual priority register list.
+// - 20260520-2004 UTC: Rework home-consumption availability to watchdog-style stale transitions (same priority stale logic) to prevent rapid online/offline flapping and resulting HA graph gaps.
+// - 20260520-1922 UTC: Add configurable home-consumption derived metric engine (A-B source selectors, skew gate, dedicated availability, dedicated HA discovery) published on priority cadence, with full settings/config validation and UI support.
 // - 20260428-2007 UTC: Normalize Connectivity card typography by removing MQTT broker/client inline font downscaling so MQTT and WiFi rows render at the same size.
 // - 20260428-1954 UTC: Unify Monitoring typography with shared page styles by switching rows to common stat-* classes and removing card-local font-size overrides.
 // - 20260428-1947 UTC: Refine Monitoring Connectivity card with in-card MQTT subsection header and spacing for clearer WiFi vs MQTT grouping.
@@ -62,6 +67,6 @@
 // - 20260417-2155 UTC: Repurpose raw_frame_dump to capture full unknown Huawei FC 0x41 frames only (chunked output for reconstruction) and update debug help text.
 // - 20260417-2038 UTC: Add passive decode support for Huawei FC 0x41 list-framed traffic (request/response correlation + entry decode), and extend KNOWN_REGS with observed canonical addresses from off-integration logs.
 // - 20260417-2004 UTC: Introduce HA-manager-style CodeDate discipline for the sniffer project (new CodeDate.h, build-time validation in build_validate.py, and monitoring API/UI exposure of CODE_DATE and BUILD_TIMESTAMP).
-#define CODE_DATE "20260428-2007"
+#define CODE_DATE "20260520-2037"
 
 #endif // CODE_DATE_H

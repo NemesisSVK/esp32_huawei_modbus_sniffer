@@ -838,6 +838,27 @@ static void handle_settings(AsyncWebServerRequest* req) {
     page += htmlEscape(manualRegs);
     page += "</textarea><div class='form-help'>One selector per line. Use <code>register</code> for all sources, or <code>source:register</code> for exact source (<code>fc03</code>, <code>fc04</code>, <code>h41_33</code>, <code>h41_x</code>).</div></div>";
 
+    // Home consumption calculator (derived A-B in priority topic)
+    page += "<h3 style='color:#b0b0b0;font-size:.95em;margin:14px 0 6px'>Home Consumption Calculator</h3>";
+    page += "<div class='form-row'><label>Enabled</label><select name='home_consumption_enabled'>";
+    page += String("<option value='false'") + (!st.home_consumption.enabled ? " selected" : "") + ">Disabled</option>";
+    page += String("<option value='true'") + (st.home_consumption.enabled ? " selected" : "") + ">Enabled</option>";
+    page += "</select><div class='form-help'>Computes <code>A-B</code> and publishes as a value in MQTT topic <code>priority</code> on the same tier cadence.</div></div>";
+    page += "<div class='form-row'><label>Selector A</label>"
+            "<div style='display:flex;gap:8px;align-items:center'>"
+            "<input name='home_consumption_selector_a' id='home_consumption_selector_a' list='known_register_names' placeholder='source:register' style='flex:1' value='";
+    page += htmlEscape(st.home_consumption.selector_a);
+    page += "'></div><div class='form-help'>Mandatory source selector (e.g. <code>h41_33:inverter_active_power_fast</code>).</div></div>";
+    page += "<div class='form-row'><label>Selector B</label>"
+            "<div style='display:flex;gap:8px;align-items:center'>"
+            "<input name='home_consumption_selector_b' id='home_consumption_selector_b' list='known_register_names' placeholder='source:register' style='flex:1' value='";
+    page += htmlEscape(st.home_consumption.selector_b);
+    page += "'></div><div class='form-help'>Mandatory source selector (e.g. <code>h41_33:meter_active_power_fast</code>).</div></div>";
+    page += row("Max Skew (ms)", "home_consumption_max_skew_ms", String(st.home_consumption.max_skew_ms), "number",
+                "Maximum timestamp delta allowed between A and B before marking derived sensor unavailable.");
+    page += row("Output Name", "home_consumption_output_name", st.home_consumption.output_name, "text",
+                "MQTT JSON key in <code>priority</code> payload and HA entity suffix (letters/digits/underscore).");
+
     page += "</div>";
 
     // RS485 / Modbus + Pins card
@@ -951,6 +972,19 @@ function canonicalizeManualSelector(v){
   if(!src || !reg) return raw;
   if(!isKnownSourceToken(src)) return raw;
   return `${src}:${reg}`;
+}
+function canonicalizeSourceSelector(v){
+  const raw = canonicalizeManualSelector(v);
+  if(!raw) return '';
+  const idx = raw.indexOf(':');
+  if(idx <= 0) return raw;
+  const src = normalizeSourceToken(raw.slice(0, idx));
+  const reg = raw.slice(idx + 1).trim();
+  if(!src || !reg || !isKnownSourceToken(src)) return raw;
+  return `${src}:${reg}`;
+}
+function isValidOutputName(v){
+  return /^[A-Za-z0-9_]{1,48}$/.test(String(v||'').trim());
 }
 function normalizeManualRegs(lines){
   const out = [];
@@ -1148,6 +1182,13 @@ function collectSettings(){
     tier: f.manual_group_tier.value,
     registers: manualRegs
   };
+  d.home_consumption = {
+    enabled: f.home_consumption_enabled.value === 'true',
+    selector_a: canonicalizeSourceSelector(f.home_consumption_selector_a.value),
+    selector_b: canonicalizeSourceSelector(f.home_consumption_selector_b.value),
+    max_skew_ms: parseInt(f.home_consumption_max_skew_ms.value)||1000,
+    output_name: String(f.home_consumption_output_name.value||'').trim()
+  };
   return d;
 }
 function save(){
@@ -1156,6 +1197,8 @@ function save(){
     (f.manual_group_registers.value||'').split('\n').map(resolveManualReg)
   );
   f.manual_group_registers.value = regs.join('\n');
+  f.home_consumption_selector_a.value = canonicalizeSourceSelector(f.home_consumption_selector_a.value);
+  f.home_consumption_selector_b.value = canonicalizeSourceSelector(f.home_consumption_selector_b.value);
   if(KNOWN_REG_NAMES.size > 0){
     const bad = regs.filter(sel=>{
       const src = selectorSource(sel);
@@ -1165,6 +1208,37 @@ function save(){
     });
     if(bad.length){
       alert("Invalid manual-group selector(s):\n" + bad.join('\n'));
+      return;
+    }
+  }
+  const hcEnabled = f.home_consumption_enabled.value === 'true';
+  const selA = String(f.home_consumption_selector_a.value||'').trim();
+  const selB = String(f.home_consumption_selector_b.value||'').trim();
+  if(hcEnabled){
+    const badSelectors = [];
+    [selA, selB].forEach((sel, idx)=>{
+      const label = idx===0 ? 'A' : 'B';
+      const src = selectorSource(sel);
+      const reg = selectorRegister(sel);
+      if(!src || !isKnownSourceToken(src) || !reg) badSelectors.push(`${label}: ${sel||'(empty)'}`);
+      else if(KNOWN_REG_NAMES.size > 0 && !KNOWN_REG_NAMES.has(reg)) badSelectors.push(`${label}: ${sel}`);
+    });
+    if(badSelectors.length){
+      alert("Invalid home-consumption selector(s):\n" + badSelectors.join('\n') + "\nUse source:register format.");
+      return;
+    }
+    if(selA === selB){
+      alert("Home-consumption selectors A and B must differ.");
+      return;
+    }
+    const skew = parseInt(f.home_consumption_max_skew_ms.value);
+    if(!Number.isFinite(skew) || skew < 0 || skew > 60000){
+      alert("Home-consumption max skew must be 0-60000 ms.");
+      return;
+    }
+    const outName = String(f.home_consumption_output_name.value||'').trim();
+    if(!isValidOutputName(outName)){
+      alert("Home-consumption output name must match [A-Za-z0-9_]{1,48}.");
       return;
     }
   }

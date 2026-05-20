@@ -121,8 +121,28 @@ static constexpr uint8_t SRC_FC03_ID      = 1;
 static constexpr uint8_t SRC_FC04_ID      = 2;
 static constexpr uint8_t SRC_H41_SUB33_ID = 3;
 static constexpr uint8_t SRC_H41_OTHER_ID = 4;
+static constexpr uint8_t SRC_DERIVED_ID   = 5;
+
+struct HomeConsumptionSelector {
+    bool    valid;
+    uint8_t source_id;
+    char    reg_name[48];
+};
+
+static bool s_home_consumption_discovery_published = false;
+static uint32_t s_last_home_consumption_discovery_attempt_ms = 0;
+static bool s_home_consumption_enabled_runtime = false;
+static HomeConsumptionSelector s_home_consumption_sel_a = { false, 0, {0} };
+static HomeConsumptionSelector s_home_consumption_sel_b = { false, 0, {0} };
+static char s_home_consumption_output_name[48] = "home_consumption_power";
 
 static void to_ha_token(const char* in, char* out, size_t out_len);
+static GroupBuffer* get_group_buf(RegGroup g);
+static void update_cache(const char* name, float value,
+                         const char* unit, uint8_t slave_addr,
+                         uint8_t grp_idx, uint8_t source_id,
+                         uint16_t reg_addr, uint8_t reg_words);
+static bool json_doc_get_numeric(JsonDocument& doc, const char* key, float* out);
 
 struct DiagEntityDef {
     const char* key;
@@ -144,6 +164,7 @@ static const char* source_tag(uint8_t source_id) {
         case SRC_FC04_ID:      return "FC04";
         case SRC_H41_SUB33_ID: return "H41-33";
         case SRC_H41_OTHER_ID: return "H41-X";
+        case SRC_DERIVED_ID:   return "DRV";
         default:            return "UNK";
     }
 }
@@ -154,6 +175,7 @@ static const char* source_icon(uint8_t source_id) {
         case SRC_FC04_ID:      return "DOC";
         case SRC_H41_SUB33_ID:
         case SRC_H41_OTHER_ID: return "REV";
+        case SRC_DERIVED_ID:   return "DER";
         default:            return "UNK";
     }
 }
@@ -401,6 +423,122 @@ static void to_ha_token(const char* in, char* out, size_t out_len) {
     out[wi] = '\0';
 }
 
+static bool home_consumption_parse_selector(const String& raw,
+                                            HomeConsumptionSelector* out) {
+    if (!out) return false;
+    out->valid = false;
+    out->source_id = 0;
+    out->reg_name[0] = '\0';
+
+    String selector = raw;
+    selector.trim();
+    const int sep = selector.indexOf(':');
+    if (sep <= 0) return false;
+
+    String src = selector.substring(0, sep);
+    String reg = selector.substring(sep + 1);
+    reg.trim();
+    if (reg.length() == 0) return false;
+
+    const uint8_t source_id = manual_selector_source_to_id(src);
+    if (source_id == 0) return false;
+    if (reg.length() >= (int)sizeof(out->reg_name)) return false;
+
+    out->source_id = source_id;
+    strncpy(out->reg_name, reg.c_str(), sizeof(out->reg_name) - 1);
+    out->reg_name[sizeof(out->reg_name) - 1] = '\0';
+    out->valid = true;
+    return true;
+}
+
+static bool home_consumption_feature_enabled() {
+    return s_cfg &&
+           s_home_consumption_enabled_runtime &&
+           s_cfg->publish.group_enabled[GRP_PRIORITY_MANUAL];
+}
+
+static bool json_doc_get_numeric(JsonDocument& doc, const char* key, float* out) {
+    if (!key || !out) return false;
+    JsonVariantConst v = doc[key];
+    if (v.isNull()) return false;
+    if (v.is<float>()) {
+        *out = v.as<float>();
+        return true;
+    }
+    if (v.is<int32_t>()) {
+        *out = (float)v.as<int32_t>();
+        return true;
+    }
+    if (v.is<uint32_t>()) {
+        *out = (float)v.as<uint32_t>();
+        return true;
+    }
+    if (v.is<int64_t>()) {
+        *out = (float)v.as<int64_t>();
+        return true;
+    }
+    if (v.is<uint64_t>()) {
+        *out = (float)v.as<uint64_t>();
+        return true;
+    }
+    return false;
+}
+
+static bool mqtt_publish_home_consumption_discovery() {
+    if (!s_mgr || !s_cfg || !s_mgr->isConnected() || !s_home_consumption_enabled_runtime) return false;
+
+    char client_tok[64];
+    to_ha_token(s_cfg->mqtt.client_id.c_str(), client_tok, sizeof(client_tok));
+    char out_tok[64];
+    to_ha_token(s_home_consumption_output_name, out_tok, sizeof(out_tok));
+
+    char entity_key[96];
+    snprintf(entity_key, sizeof(entity_key), "priority_%s", out_tok);
+
+    char entity_full[160];
+    snprintf(entity_full, sizeof(entity_full), "%s_%s", client_tok, entity_key);
+
+    char disc_topic[220];
+    snprintf(disc_topic, sizeof(disc_topic), "homeassistant/sensor/%s/config", entity_full);
+
+    char state_topic[96];
+    snprintf(state_topic, sizeof(state_topic), "%s/priority", s_cfg->mqtt.base_topic.c_str());
+
+    char availability_topic[96];
+    snprintf(availability_topic, sizeof(availability_topic),
+             "%s/%s/available",
+             s_cfg->mqtt.base_topic.c_str(), GROUP_INFO[(int)GRP_PRIORITY_MANUAL].key);
+
+    char val_tpl[96];
+    snprintf(val_tpl, sizeof(val_tpl), "{{ value_json.%s }}", s_home_consumption_output_name);
+
+    char default_entity_id[180];
+    snprintf(default_entity_id, sizeof(default_entity_id), "sensor.%s", entity_full);
+
+    JsonDocument doc;
+    doc["name"] = entity_key;
+    doc["object_id"] = entity_full;
+    doc["state_topic"] = state_topic;
+    doc["value_template"] = val_tpl;
+    doc["unique_id"] = entity_full;
+    doc["default_entity_id"] = default_entity_id;
+    doc["availability_topic"] = availability_topic;
+    doc["unit_of_measurement"] = "W";
+    doc["device_class"] = "power";
+    doc["state_class"] = "measurement";
+
+    JsonObject dev = doc["device"].to<JsonObject>();
+    JsonArray ids = dev["identifiers"].to<JsonArray>();
+    ids.add(s_cfg->mqtt.client_id);
+    dev["name"] = s_cfg->device_info.name;
+    dev["manufacturer"] = s_cfg->device_info.manufacturer;
+    dev["model"] = s_cfg->device_info.model;
+
+    String payload;
+    serializeJson(doc, payload);
+    return s_mgr->publish(disc_topic, payload.c_str(), /*retained*/true, /*qos*/0);
+}
+
 static void build_ha_entity_key(const ValCache& c, char* out, size_t out_len) {
     if (!out || out_len == 0) return;
     char grp_name[48];
@@ -546,6 +684,7 @@ static void mqtt_publish_ha_discovery(int idx) {
     if (!s_mgr || !s_cfg) return;
     const ValCache& c = s_cache[idx];
     if (!c.valid || c.grp_idx >= GRP_COUNT) return;
+    if (c.source_id == SRC_DERIVED_ID) return; // dedicated discovery path
 
     char entity_key[96];
     build_ha_entity_key(c, entity_key, sizeof(entity_key));
@@ -655,6 +794,19 @@ static void flush_group(RegGroup g, PublishTier tier) {
 
     GroupBuffer* buf = get_group_buf(g);
     if (buf && buf->doc.size() > 0) {
+        if (g == GRP_PRIORITY_MANUAL && home_consumption_feature_enabled() &&
+            s_home_consumption_sel_a.valid && s_home_consumption_sel_b.valid) {
+            float a = 0.0f;
+            float b = 0.0f;
+            if (json_doc_get_numeric(buf->doc, s_home_consumption_sel_a.reg_name, &a) &&
+                json_doc_get_numeric(buf->doc, s_home_consumption_sel_b.reg_name, &b)) {
+                const float home_consumption = a - b;
+                buf->doc[s_home_consumption_output_name] = home_consumption;
+                update_cache(s_home_consumption_output_name, home_consumption, "W", 0,
+                             (uint8_t)GRP_PRIORITY_MANUAL, SRC_DERIVED_ID, 0, 0);
+            }
+        }
+
         String payload;
         serializeJson(buf->doc, payload);
         buf->doc.clear();  // free memory before publishing
@@ -724,6 +876,35 @@ void mqtt_publisher_init(MQTTManager* mgr, const Settings* cfg) {
     s_last_diag_publish_ms = 0;
     s_last_diag_discovery_attempt_ms = 0;
     s_diag_failure_log_ms = 0;
+
+    s_home_consumption_discovery_published = false;
+    s_last_home_consumption_discovery_attempt_ms = 0;
+    s_home_consumption_enabled_runtime = false;
+    s_home_consumption_sel_a = { false, 0, {0} };
+    s_home_consumption_sel_b = { false, 0, {0} };
+
+    if (s_cfg) {
+        s_home_consumption_enabled_runtime = s_cfg->home_consumption.enabled;
+        strncpy(s_home_consumption_output_name,
+                s_cfg->home_consumption.output_name.c_str(),
+                sizeof(s_home_consumption_output_name) - 1);
+        s_home_consumption_output_name[sizeof(s_home_consumption_output_name) - 1] = '\0';
+        if (s_home_consumption_output_name[0] == '\0') {
+            strncpy(s_home_consumption_output_name, "home_consumption_power",
+                    sizeof(s_home_consumption_output_name) - 1);
+            s_home_consumption_output_name[sizeof(s_home_consumption_output_name) - 1] = '\0';
+        }
+        home_consumption_parse_selector(s_cfg->home_consumption.selector_a,
+                                        &s_home_consumption_sel_a);
+        home_consumption_parse_selector(s_cfg->home_consumption.selector_b,
+                                        &s_home_consumption_sel_b);
+        if (!s_home_consumption_sel_a.valid || !s_home_consumption_sel_b.valid ||
+            (s_home_consumption_sel_a.source_id == s_home_consumption_sel_b.source_id &&
+             strcmp(s_home_consumption_sel_a.reg_name, s_home_consumption_sel_b.reg_name) == 0)) {
+            s_home_consumption_enabled_runtime = false;
+            UnifiedLogger::warning("[MQTT] home consumption disabled at runtime (invalid selectors)\n");
+        }
+    }
 }
 
 void mqtt_loop() {
@@ -739,6 +920,8 @@ void mqtt_loop() {
         s_diag_discovered = false;
         s_last_diag_publish_ms = 0;
         s_last_diag_discovery_attempt_ms = 0;
+        s_home_consumption_discovery_published = false;
+        s_last_home_consumption_discovery_attempt_ms = 0;
         for (int i = 0; i < s_cache_count; i++)
             s_cache[i].ha_discovered = false;
     }
@@ -761,6 +944,13 @@ void mqtt_loop() {
             mqtt_publish_diag_state_snapshot();
             s_last_diag_publish_ms = now;
         }
+        if (s_home_consumption_enabled_runtime &&
+            !s_home_consumption_discovery_published &&
+            (s_last_home_consumption_discovery_attempt_ms == 0 ||
+             (now - s_last_home_consumption_discovery_attempt_ms) >= DIAG_DISCOVERY_RETRY_MS)) {
+            s_last_home_consumption_discovery_attempt_ms = now;
+            s_home_consumption_discovery_published = mqtt_publish_home_consumption_discovery();
+        }
     }
 }
 
@@ -773,7 +963,7 @@ void mqtt_publish_value(const char* name, float value,
                         RegGroup group, uint8_t source_id,
                         uint16_t reg_addr, uint8_t reg_words) {
     if (!s_cfg) return;
-
+    const uint32_t now = millis();
     RegGroup routed_group = group;
     if (manual_group_matches_register(name, source_id)) {
         routed_group = GRP_PRIORITY_MANUAL;
@@ -793,7 +983,6 @@ void mqtt_publish_value(const char* name, float value,
     if (buf) buf->doc[name] = value;
 
     // 3. Mark this group as recently active for the availability watchdog.
-    uint32_t now = millis();
     lock_avail_state();
     s_last_seen_ms[routed_group] = now;
     s_avail_offline[routed_group] = false;
@@ -848,6 +1037,13 @@ void mqtt_tick() {
             (now - s_last_diag_publish_ms) >= DIAG_PUBLISH_INTERVAL_MS) {
             mqtt_publish_diag_state_snapshot();
             s_last_diag_publish_ms = now;
+        }
+        if (s_home_consumption_enabled_runtime &&
+            !s_home_consumption_discovery_published &&
+            (s_last_home_consumption_discovery_attempt_ms == 0 ||
+             (now - s_last_home_consumption_discovery_attempt_ms) >= DIAG_DISCOVERY_RETRY_MS)) {
+            s_last_home_consumption_discovery_attempt_ms = now;
+            s_home_consumption_discovery_published = mqtt_publish_home_consumption_discovery();
         }
     }
 

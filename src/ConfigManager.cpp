@@ -20,14 +20,16 @@ static void normalize_raw_capture_profile(String& profile) {
     profile = "unknown_h41";
 }
 
-static bool normalize_manual_group_selector(const String& input,
-                                            String* out_selector,
-                                            String* out_register,
-                                            String* out_error) {
+static bool normalize_source_register_selector(const String& input,
+                                               bool require_source,
+                                               const char* context_label,
+                                               String* out_selector,
+                                               String* out_register,
+                                               String* out_error) {
     String s = input;
     s.trim();
     if (s.length() == 0) {
-        if (out_error) *out_error = "Manual group selector cannot be empty";
+        if (out_error) *out_error = String(context_label) + " selector cannot be empty";
         return false;
     }
 
@@ -35,32 +37,80 @@ static bool normalize_manual_group_selector(const String& input,
     const int sep = s.indexOf(':');
     if (sep >= 0) {
         if (sep == 0) {
-            if (out_error) *out_error = "Manual group source selector is missing source token before ':'";
+            if (out_error) *out_error = String(context_label) + " selector is missing source token before ':'";
             return false;
         }
         String src = s.substring(0, sep);
         reg_name = s.substring(sep + 1);
         reg_name.trim();
         if (reg_name.length() == 0) {
-            if (out_error) *out_error = "Manual group source selector is missing register name after ':'";
+            if (out_error) *out_error = String(context_label) + " selector is missing register name after ':'";
             return false;
         }
         String norm_src = normalize_manual_selector_source(src);
         if (norm_src.length() == 0) {
-            if (out_error) *out_error = "Unknown manual-group source token (expected fc03|fc04|h41_33|h41_x)";
+            if (out_error) *out_error = String("Unknown source token in ") + context_label +
+                                        " selector (expected fc03|fc04|h41_33|h41_x)";
             return false;
         }
         s = norm_src + ":" + reg_name;
+    } else if (require_source) {
+        if (out_error) *out_error = String(context_label) + " selector must use source:register";
+        return false;
     }
 
     if (!huawei_decoder_is_known_register_name(reg_name.c_str())) {
-        if (out_error) *out_error = String("Unknown register in manual group: '") + reg_name + "'";
+        if (out_error) *out_error = String("Unknown register in ") + context_label +
+                                    " selector: '" + reg_name + "'";
         return false;
     }
 
     if (out_selector) *out_selector = s;
     if (out_register) *out_register = reg_name;
     return true;
+}
+
+static bool normalize_manual_group_selector(const String& input,
+                                            String* out_selector,
+                                            String* out_register,
+                                            String* out_error) {
+    return normalize_source_register_selector(input, false, "Manual group",
+                                              out_selector, out_register, out_error);
+}
+
+static bool normalize_home_consumption_selector(const String& input,
+                                                const char* selector_label,
+                                                String* out_selector,
+                                                String* out_register,
+                                                String* out_error) {
+    return normalize_source_register_selector(input, true, selector_label,
+                                              out_selector, out_register, out_error);
+}
+
+static bool is_valid_output_name_token(const String& input) {
+    if (input.length() == 0 || input.length() > 48) return false;
+    for (size_t i = 0; i < input.length(); i++) {
+        const char c = input[i];
+        const bool ok = (c >= 'a' && c <= 'z') ||
+                        (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') ||
+                        c == '_';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+static bool manual_group_contains_selector(const Settings& st,
+                                           const String& selector,
+                                           const String& reg_name) {
+    for (const String& raw : st.publish.manual_group.registers) {
+        String cur = raw;
+        cur.trim();
+        if (cur.length() == 0) continue;
+        if (cur == selector) return true;
+        if (cur == reg_name) return true; // all-source selector covers source-specific requirement
+    }
+    return false;
 }
 
 static bool validate_runtime_settings(const Settings& st, String* out_error) {
@@ -145,6 +195,33 @@ static bool validate_runtime_settings(const Settings& st, String* out_error) {
         }
     }
 
+    if (st.home_consumption.max_skew_ms < 0 || st.home_consumption.max_skew_ms > 60000)
+        return fail("home_consumption.max_skew_ms must be 0-60000");
+    if (!is_valid_output_name_token(st.home_consumption.output_name))
+        return fail("home_consumption.output_name must be 1-48 chars [A-Za-z0-9_]");
+
+    String sel_a, reg_a, sel_b, reg_b, err;
+    if (!normalize_home_consumption_selector(st.home_consumption.selector_a,
+                                             "home_consumption.selector_a",
+                                             &sel_a, &reg_a, &err)) {
+        return fail(err);
+    }
+    if (!normalize_home_consumption_selector(st.home_consumption.selector_b,
+                                             "home_consumption.selector_b",
+                                             &sel_b, &reg_b, &err)) {
+        return fail(err);
+    }
+    if (sel_a == sel_b)
+        return fail("home_consumption selectors A and B must differ");
+    if (st.home_consumption.enabled && !st.publish.manual_group.enabled)
+        return fail("home_consumption.enabled requires publish.manual_group.enabled=true");
+    if (st.home_consumption.enabled) {
+        if (!manual_group_contains_selector(st, sel_a, reg_a))
+            return fail("home_consumption.selector_a must be present in publish.manual_group.registers");
+        if (!manual_group_contains_selector(st, sel_b, reg_b))
+            return fail("home_consumption.selector_b must be present in publish.manual_group.registers");
+    }
+
     return true;
 }
 
@@ -199,6 +276,11 @@ void ConfigManager::setDefaults() {
     settings.publish.manual_group.enabled = false;
     settings.publish.manual_group.tier = TIER_HIGH;
     settings.publish.manual_group.registers.clear();
+    settings.home_consumption.enabled = false;
+    settings.home_consumption.selector_a = "h41_33:inverter_active_power_fast";
+    settings.home_consumption.selector_b = "h41_33:meter_active_power_fast";
+    settings.home_consumption.max_skew_ms = 1000;
+    settings.home_consumption.output_name = "home_consumption_power";
 }
 
 bool ConfigManager::loadConfiguration() {
@@ -376,6 +458,33 @@ bool ConfigManager::parseJson(const JsonDocument& doc) {
     settings.publish.group_tier[GRP_PRIORITY_MANUAL] = settings.publish.manual_group.tier;
     settings.publish.group_enabled[GRP_PRIORITY_MANUAL] = settings.publish.manual_group.enabled;
 
+    // home consumption calculator
+    if (!doc["home_consumption"]["enabled"].isNull())
+        settings.home_consumption.enabled = doc["home_consumption"]["enabled"].as<bool>();
+    if (doc["home_consumption"]["selector_a"].is<const char*>()) {
+        String selector, reg_name;
+        if (normalize_home_consumption_selector(doc["home_consumption"]["selector_a"].as<String>(),
+                                                "home_consumption.selector_a",
+                                                &selector, &reg_name, nullptr)) {
+            settings.home_consumption.selector_a = selector;
+        }
+    }
+    if (doc["home_consumption"]["selector_b"].is<const char*>()) {
+        String selector, reg_name;
+        if (normalize_home_consumption_selector(doc["home_consumption"]["selector_b"].as<String>(),
+                                                "home_consumption.selector_b",
+                                                &selector, &reg_name, nullptr)) {
+            settings.home_consumption.selector_b = selector;
+        }
+    }
+    if (!doc["home_consumption"]["max_skew_ms"].isNull())
+        settings.home_consumption.max_skew_ms = doc["home_consumption"]["max_skew_ms"].as<int>();
+    if (doc["home_consumption"]["output_name"].is<const char*>()) {
+        String output_name = doc["home_consumption"]["output_name"].as<String>();
+        if (is_valid_output_name_token(output_name))
+            settings.home_consumption.output_name = output_name;
+    }
+
     return true;
 }
 
@@ -443,6 +552,12 @@ void ConfigManager::buildJson(JsonDocument& doc) const {
     JsonArray mgRegs = doc["publish"]["manual_group"]["registers"].to<JsonArray>();
     for (const String& reg : settings.publish.manual_group.registers)
         mgRegs.add(reg);
+
+    doc["home_consumption"]["enabled"] = settings.home_consumption.enabled;
+    doc["home_consumption"]["selector_a"] = settings.home_consumption.selector_a;
+    doc["home_consumption"]["selector_b"] = settings.home_consumption.selector_b;
+    doc["home_consumption"]["max_skew_ms"] = settings.home_consumption.max_skew_ms;
+    doc["home_consumption"]["output_name"] = settings.home_consumption.output_name;
 }
 
 bool ConfigManager::saveConfiguration() {
@@ -779,6 +894,74 @@ bool ConfigManager::updateSettingsFromJson(const String& jsonBody) {
                 }
             }
             candidate.publish.manual_group.registers = regs;
+        }
+    }
+
+    if (!doc["home_consumption"].isNull()) {
+        JsonVariantConst hc = doc["home_consumption"];
+        if (!hc.is<JsonObjectConst>()) {
+            lastError = "home_consumption must be an object";
+            return false;
+        }
+
+        if (!hc["enabled"].isNull()) {
+            if (!hc["enabled"].is<bool>()) {
+                lastError = "home_consumption.enabled must be a boolean";
+                return false;
+            }
+            candidate.home_consumption.enabled = hc["enabled"].as<bool>();
+        }
+
+        if (!hc["selector_a"].isNull()) {
+            if (!hc["selector_a"].is<const char*>()) {
+                lastError = "home_consumption.selector_a must be a string";
+                return false;
+            }
+            String selector, reg_name, sel_err;
+            if (!normalize_home_consumption_selector(hc["selector_a"].as<String>(),
+                                                     "home_consumption.selector_a",
+                                                     &selector, &reg_name, &sel_err)) {
+                lastError = sel_err;
+                return false;
+            }
+            candidate.home_consumption.selector_a = selector;
+        }
+
+        if (!hc["selector_b"].isNull()) {
+            if (!hc["selector_b"].is<const char*>()) {
+                lastError = "home_consumption.selector_b must be a string";
+                return false;
+            }
+            String selector, reg_name, sel_err;
+            if (!normalize_home_consumption_selector(hc["selector_b"].as<String>(),
+                                                     "home_consumption.selector_b",
+                                                     &selector, &reg_name, &sel_err)) {
+                lastError = sel_err;
+                return false;
+            }
+            candidate.home_consumption.selector_b = selector;
+        }
+
+        if (!hc["max_skew_ms"].isNull()) {
+            JsonVariantConst v = hc["max_skew_ms"];
+            if (!(v.is<int>() || v.is<long>())) {
+                lastError = "home_consumption.max_skew_ms must be an integer";
+                return false;
+            }
+            candidate.home_consumption.max_skew_ms = v.as<int>();
+        }
+
+        if (!hc["output_name"].isNull()) {
+            if (!hc["output_name"].is<const char*>()) {
+                lastError = "home_consumption.output_name must be a string";
+                return false;
+            }
+            String output_name = hc["output_name"].as<String>();
+            if (!is_valid_output_name_token(output_name)) {
+                lastError = "home_consumption.output_name must be 1-48 chars [A-Za-z0-9_]";
+                return false;
+            }
+            candidate.home_consumption.output_name = output_name;
         }
     }
 

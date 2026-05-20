@@ -125,6 +125,29 @@ def validate_ip_whitelist(security):
             raise Exception(f"security.ip_ranges[{i}] is not a valid IP or range: {r!r}")
 
 
+def validate_source_register_selector(value, key_name):
+    if not isinstance(value, str):
+        raise Exception(f"{key_name} must be a string")
+    raw = value.strip()
+    if not raw:
+        raise Exception(f"{key_name} must not be empty")
+    if ":" not in raw:
+        raise Exception(f"{key_name} must use source:register format")
+    src, reg = raw.split(":", 1)
+    src = src.strip().lower().replace("-", "_")
+    reg = reg.strip()
+    if src not in ("fc03", "fc04", "h41_33", "h41_x"):
+        raise Exception(f"{key_name} source token must be one of fc03|fc04|h41_33|h41_x, got: {src!r}")
+    if not reg:
+        raise Exception(f"{key_name} register name must not be empty")
+
+
+def selector_parts(value):
+    raw = str(value).strip()
+    src, reg = raw.split(":", 1)
+    return src.strip().lower().replace("-", "_"), reg.strip()
+
+
 # ============================================================
 # Main config.json validator
 # ============================================================
@@ -317,6 +340,39 @@ def validate_config(project_dir):
                 raise Exception(f"publish.manual_group.registers[{i}] must be a string")
             if not r.strip():
                 raise Exception(f"publish.manual_group.registers[{i}] must not be empty")
+
+    # ---- home_consumption (optional section) ----
+    hc = config.get("home_consumption", {})
+    if hc and not isinstance(hc, dict):
+        raise Exception("home_consumption must be an object")
+    if "enabled" in hc and not isinstance(hc["enabled"], bool):
+        raise Exception("home_consumption.enabled must be a boolean")
+    if "selector_a" in hc:
+        validate_source_register_selector(hc["selector_a"], "home_consumption.selector_a")
+    if "selector_b" in hc:
+        validate_source_register_selector(hc["selector_b"], "home_consumption.selector_b")
+    if "max_skew_ms" in hc:
+        ms = hc["max_skew_ms"]
+        if not isinstance(ms, int) or not (0 <= ms <= 60000):
+            raise Exception(f"home_consumption.max_skew_ms must be 0-60000, got: {ms!r}")
+    if "output_name" in hc:
+        out = hc["output_name"]
+        if not isinstance(out, str):
+            raise Exception("home_consumption.output_name must be a string")
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,48}", out):
+            raise Exception("home_consumption.output_name must match [A-Za-z0-9_]{1,48}")
+    if hc.get("enabled", False) and not mg.get("enabled", False):
+        raise Exception("home_consumption.enabled requires publish.manual_group.enabled=true")
+    if hc.get("enabled", False):
+        regs = mg.get("registers", [])
+        src_a, reg_a = selector_parts(hc.get("selector_a", ""))
+        src_b, reg_b = selector_parts(hc.get("selector_b", ""))
+        sel_a = f"{src_a}:{reg_a}"
+        sel_b = f"{src_b}:{reg_b}"
+        if sel_a not in regs and reg_a not in regs:
+            raise Exception("home_consumption.selector_a must be present in publish.manual_group.registers")
+        if sel_b not in regs and reg_b not in regs:
+            raise Exception("home_consumption.selector_b must be present in publish.manual_group.registers")
 
     # Validate CODE_DATE discipline and Change log formatting
     validate_code_date(project_dir)
